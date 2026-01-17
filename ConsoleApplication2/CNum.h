@@ -31,6 +31,15 @@ public:
 	CNum operator/(const double& a) const;
 	CNum operator=(const double& a) const;
 	bool operator==(const CNum& a) const;
+	bool operator==(const double& a) const {
+		return (re == a) && (im == 0);
+	}
+	bool operator!=(const CNum& a) const {
+		return (re != a.getRe()) || (im != a.getIm());
+	}
+	bool operator!=(const double& a) const {
+		return (re != a) || (im != 0);
+	}
 	friend ostream& operator<<(ostream& os, const CNum& n);
 
 };

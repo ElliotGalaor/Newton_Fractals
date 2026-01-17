@@ -53,7 +53,7 @@ CNum CNum::operator/(const CNum& other) const {
 	double b = this->getIm();
 	double c = other.getRe();
 	double d = other.getIm();
-	double K = pow(c, 2) + pow(d, 2);
+	double K = 1/(pow(c, 2) + pow(d, 2));
 	return CNum(K * (a * c + b * d), K * (b * c - a * d));
 }
 
