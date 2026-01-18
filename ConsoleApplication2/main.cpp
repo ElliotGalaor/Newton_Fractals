@@ -92,7 +92,7 @@ void affiche_terminal_simple(int dim_x, int dim_y) {
 
 int main()
 {
-    affiche_terminal_simple(50, 80);
+    affiche_terminal_simple(100, 150);
     
 
     //return 0;
