@@ -1,7 +1,10 @@
 #include <iostream>
+#include <iostream>
+#include <fstream>
 #include <vector>
 #include <math.h>
 #include "CNum.h"
+#include "Tableau.h"
 
 using namespace std;
 
@@ -90,11 +93,39 @@ void affiche_terminal_simple(int dim_x, int dim_y) {
     }
 }
 
+void write_file(vector<vector<int>> tab) {
+    ofstream MyFile("results.txt");
+    for (vector<int> i : tab) {
+        for (int j : i) {
+            MyFile << j << " ";
+        }
+        MyFile << endl;
+    }
+
+    MyFile.close();
+}
+
 int main()
 {
-    affiche_terminal_simple(100, 150);
+    //affiche_terminal_simple(100, 150);
     
+    int dim_x = 1000;
+    int dim_y = 1000;
+    vector<vector<CNum>> test = init_map_simple(dim_x, dim_y);
+    vector<vector<int>> res = map_fractale_simple(test, dim_x, dim_y);
+    write_file(res);
 
-    //return 0;
+    string filename = "NewtonFractalsDrawing.py";
+    string command = "python ";
+    command += filename;
+    cout << "Show graph ? (Y/N)" << endl;
+    char test_affichage;
+    cin >> test_affichage;
+    char x[20];
+    x[0] = 'Y';
+    x[1] = 'y';
+    if (test_affichage == x[0] || test_affichage == x[1]) {
+        system(command.c_str());
+    }
 }
 

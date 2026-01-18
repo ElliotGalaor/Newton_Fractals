@@ -29,5 +29,6 @@ public:
     void setMinX(double min_x) { this->min_x = min_x; }
     void setMaxY(double max_y) { this->max_y = max_y; }
     void setMinY(double min_y) { this->min_y = min_y; }
+    void reInit();
 };
 

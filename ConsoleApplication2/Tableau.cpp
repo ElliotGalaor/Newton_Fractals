@@ -16,7 +16,7 @@ Tableau::Tableau() {
     tab = res;
 }
 
-Tableau::Tableau(int dim_x = 10, int dim_y = 10, double max_x = 2, double min_x = -2, double max_y = 2, double min_y = -2) {
+Tableau::Tableau(int dim_x, int dim_y, double max_x, double min_x, double max_y, double min_y) {
     vector<vector<CNum>> res;
     this->dim_x = dim_x;
     this->dim_y = dim_y;

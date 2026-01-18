@@ -130,10 +130,15 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\.gitignore" />
+    <None Include="NewtonFractalsDrawing.py" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CNum.h" />
     <ClInclude Include="Tableau.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="results.txt" />
+    <Text Include="test.txt" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

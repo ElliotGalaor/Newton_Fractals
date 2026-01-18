@@ -27,6 +27,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="..\.gitignore" />
+    <None Include="NewtonFractalsDrawing.py" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Tableau.h">
@@ -35,5 +36,9 @@
     <ClInclude Include="CNum.h">
       <Filter>Fichiers d%27en-tête</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Text Include="test.txt" />
+    <Text Include="results.txt" />
   </ItemGroup>
 </Project>
