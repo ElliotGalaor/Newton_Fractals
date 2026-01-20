@@ -14,6 +14,17 @@ Tableau::Tableau() {
         }
     }
     tab = res;
+    vector<vector<int>> res_int;
+    res_int.resize(dim_x);  
+    for (int i = 0; i < dim_x; ++i) {
+        res_int[i].resize(dim_y);
+    }
+    for (int i = 0;i < dim_x;i++) {
+        for (int j = 0;j < dim_y;j++) {
+            res_int[i][j] = -1;
+        }
+    }
+    this->res = res_int;
 }
 
 Tableau::Tableau(int dim_x, int dim_y, double max_x, double min_x, double max_y, double min_y) {
@@ -36,6 +47,17 @@ Tableau::Tableau(int dim_x, int dim_y, double max_x, double min_x, double max_y,
         }
     }
     tab = res;
+    vector<vector<int>> res_int;
+    res_int.resize(dim_x);  
+    for (int i = 0; i < dim_x; ++i) {
+        res_int[i].resize(dim_y);
+    }
+    for (int i = 0;i < dim_x;i++) {
+        for (int j = 0;j < dim_y;j++) {
+            res_int[i][j] = -1;
+        }
+    }
+    this->res = res_int;
 }
 
 void Tableau::reInit() {
@@ -52,4 +74,15 @@ void Tableau::reInit() {
         }
     }
     tab = res;
+    vector<vector<int>> res_int;
+    res_int.resize(dim_x);   
+    for (int i = 0; i < dim_x; ++i) {
+        res_int[i].resize(dim_y);
+    }
+    for (int i = 0;i < dim_x;i++) {
+        for (int j = 0;j < dim_y;j++) {
+            res_int[i][j] = -1;
+        }
+    }
+    this->res = res_int;
 }
