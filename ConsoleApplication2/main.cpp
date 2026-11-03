@@ -5,6 +5,7 @@
 #include <vector>
 #include <chrono>
 #include <cstdlib>
+#include <algorithm>
 #include <math.h>
 #include "CNum.h"
 #include "Tableau.h"
@@ -12,18 +13,26 @@
 using namespace std;
 
 CNum j = CNum(-0.5, sqrt(3) / 2);
-// Racines du polynome
-static const CNum zero_list[] = { CNum(-1.76929,0), CNum(0.884646,-0.589743), CNum(0.884646,0.589743) };
-static const int nb_zero = sizeof(zero_list) / sizeof(zero_list[0]);
 
-// Polynome à représenter
-static inline CNum f(const CNum& x) {
-    return x.pui(3) - 2 * x + 2;
-}
+// Polynome par défaut (quand le programme est lancé sans option)
+static const char* POLYNOME_DEFAUT = "z^3 - 2z + 2";
+static const vector<CNum> COEFS_DEFAUT = { CNum(1), CNum(0), CNum(-2), CNum(2) };
+static const vector<CNum> RACINES_DEFAUT = { CNum(-1.76929,0), CNum(0.884646,-0.589743), CNum(0.884646,0.589743) };
 
-// Dérivée du polynome
-static inline CNum f_derivee(const CNum& x) {
-    return 3 * x.pui(2) - 2;
+// Polynome utilisé pour le calcul : coefficients du plus haut degré au terme constant,
+// et ses racines (dans l'ordre où elles sont numérotées dans results.txt : 1, 2, ...)
+static vector<CNum> coefs = COEFS_DEFAUT;
+static vector<CNum> zero_list = RACINES_DEFAUT;
+static double seuil2 = 0.1 * 0.1;   // distance (au carré) sous laquelle un point est attribué à une racine
+
+// Calcule p(z) et p'(z) en une seule passe (schéma de Horner)
+static inline void evaluer(const CNum& z, CNum& p, CNum& dp) {
+    p = coefs[0];
+    dp = CNum(0, 0);
+    for (size_t k = 1; k < coefs.size(); k++) {
+        dp = dp * z + p;
+        p = p * z + coefs[k];
+    }
 }
 
 
@@ -32,11 +41,12 @@ double dist(const CNum& a, const CNum& b) {
 }
 
 // Cherche en une seule passe la racine la plus proche de z.
-// Renvoie son indice (1..nb_zero) et met la distance AU CARRÉ dans d2min
+// Renvoie son indice (1..nombre de racines) et met la distance AU CARRÉ dans d2min
 // (on évite ainsi sqrt et pow dans la boucle de Newton).
 static inline int nearestZero(const CNum& z, double& d2min) {
     d2min = (z - zero_list[0]).norme2();
     int idx = 1;
+    const int nb_zero = (int)zero_list.size();
     for (int r = 1; r < nb_zero; r++) {
         double d2 = (z - zero_list[r]).norme2();
         if (d2 <= d2min) { d2min = d2; idx = r + 1; }
@@ -67,15 +77,16 @@ static void map_fractale(Tableau& tab, double eps = 1e-6, int step = 50) {
     for (int i = 0; i < dim_x; i++) {
         for (int jj = 0; jj < dim_y; jj++) {
             CNum iter = tab.getCell(i, jj);
+            CNum p, dp;
             double d2;
             int idx = nearestZero(iter, d2);
             for (int k = 0; k < step && d2 > eps2; k++) {
-                CNum fd = f_derivee(iter);      // calculée une seule fois par itération
-                if (fd == 0) break;
-                iter = iter - f(iter) / fd;
+                evaluer(iter, p, dp);
+                if (dp == 0) break;
+                iter = iter - p / dp;
                 idx = nearestZero(iter, d2);
             }
-            if (d2 < 0.1 * 0.1) tab.setIndice(idx, i, jj);
+            if (d2 < seuil2) tab.setIndice(idx, i, jj);
         }
     }
 }
@@ -107,10 +118,21 @@ struct Parametres {
     double min_y = -2, max_y = 2;
     double eps = 1e-6;
     int iterations = 50;
+    vector<CNum> coefs = COEFS_DEFAUT;       // du plus haut degré au terme constant
+    vector<CNum> racines = RACINES_DEFAUT;
 };
 
 // Calcule la fractale, écrit results.txt et affiche les temps
 static void calculer(const Parametres& p) {
+    coefs = p.coefs;
+    zero_list = p.racines;
+    // Seuil d'attribution : 0.1, réduit si des racines sont très proches l'une de l'autre
+    double seuil = 0.1;
+    for (size_t a = 0; a < zero_list.size(); a++)
+        for (size_t b = a + 1; b < zero_list.size(); b++)
+            seuil = min(seuil, 0.4 * dist(zero_list[a], zero_list[b]));
+    seuil2 = seuil * seuil;
+
     auto t0 = chrono::steady_clock::now();
     Tableau res(p.dim_x, p.dim_y, p.max_x, p.min_x, p.max_y, p.min_y);
     map_fractale(res, p.eps, p.iterations);
@@ -134,7 +156,7 @@ void Newton_Fractals(int dim_x, int dim_y, double max_x = 2, double min_x = -2, 
     ostringstream command;
     command.precision(17);
     command << "python " << filename << " --bornes " << min_x << " " << max_x << " " << min_y << " " << max_y
-            << " --eps " << eps << " --iterations " << iterations;
+            << " --eps " << eps << " --iterations " << iterations << " --polynome \"" << POLYNOME_DEFAUT << "\"";
     system(command.str().c_str());
 }
 
@@ -144,6 +166,10 @@ static void afficher_aide() {
             "  --bornes MIN_X MAX_X MIN_Y MAX_Y    zone du plan complexe (defaut -2 2 -2 2)\n"
             "  --eps EPS                           precision de convergence (defaut 1e-6)\n"
             "  --iterations N                      nombre maximal d'iterations (defaut 50)\n"
+            "  --coefs N re1 im1 ... reN imN       coefficients du polynome, du plus haut degre\n"
+            "                                      au terme constant (defaut z^3 - 2z + 2)\n"
+            "  --racines N re1 im1 ... reN imN     racines du polynome (obligatoire avec --coefs) ;\n"
+            "                                      leur ordre donne les numeros 1..N de results.txt\n"
             "Sans option : calcul par defaut puis ouverture du graphique.\n";
 }
 
@@ -154,9 +180,39 @@ static bool lire_nombre(const char* texte, double& valeur) {
     return fin != texte && *fin == '\0';
 }
 
+// Lit « N re1 im1 ... reN imN » à partir de argv[a + 1] ; avance a jusqu'à la dernière valeur lue
+static bool lire_complexes(int argc, char* argv[], int& a, vector<CNum>& sortie, string& erreur) {
+    string opt = argv[a];
+    double n;
+    if (a + 1 >= argc || !lire_nombre(argv[a + 1], n) || n < 1 || n > 100 || n != (int)n) {
+        erreur = "Nombre de valeurs invalide apres " + opt; return false;
+    }
+    int nb = (int)n;
+    if (a + 1 + 2 * nb >= argc) { erreur = "Valeurs manquantes apres " + opt; return false; }
+    sortie.clear();
+    for (int k = 0; k < nb; k++) {
+        double re, im;
+        const char* t_re = argv[a + 2 + 2 * k];
+        const char* t_im = argv[a + 3 + 2 * k];
+        if (!lire_nombre(t_re, re) || !lire_nombre(t_im, im)) {
+            erreur = string("Nombre invalide apres ") + opt; return false;
+        }
+        sortie.push_back(CNum(re, im));
+    }
+    a += 1 + 2 * nb;
+    return true;
+}
+
 static bool lire_arguments(int argc, char* argv[], Parametres& p, string& erreur) {
+    bool coefs_lus = false, racines_lues = false;
     for (int a = 1; a < argc; a++) {
         string opt = argv[a];
+        if (opt == "--coefs" || opt == "--racines") {
+            vector<CNum>& cible = (opt == "--coefs") ? p.coefs : p.racines;
+            if (!lire_complexes(argc, argv, a, cible, erreur)) return false;
+            (opt == "--coefs" ? coefs_lus : racines_lues) = true;
+            continue;
+        }
         int nb = (opt == "--taille") ? 2 : (opt == "--bornes") ? 4 : (opt == "--eps" || opt == "--iterations") ? 1 : -1;
         if (nb < 0) { erreur = "Option inconnue : " + opt; return false; }
         if (a + nb >= argc) { erreur = "Valeurs manquantes apres " + opt; return false; }
@@ -174,6 +230,8 @@ static bool lire_arguments(int argc, char* argv[], Parametres& p, string& erreur
     if (p.min_x >= p.max_x || p.min_y >= p.max_y) { erreur = "Il faut MIN < MAX pour les bornes"; return false; }
     if (p.eps <= 0) { erreur = "EPS doit etre positif"; return false; }
     if (p.iterations < 1) { erreur = "Il faut au moins 1 iteration"; return false; }
+    if (coefs_lus != racines_lues) { erreur = "--coefs et --racines doivent etre donnes ensemble"; return false; }
+    if (p.coefs.size() < 2 || p.coefs[0] == 0) { erreur = "Le polynome doit etre de degre 1 au moins"; return false; }
     return true;
 }
 

@@ -1,8 +1,11 @@
 """Interface de la fractale de Newton.
 
-Un panneau à droite permet de choisir les paramètres (pixels, zone du plan
-complexe, précision, itérations) puis de lancer le calcul C++ ; l'image se met
-à jour dans la même fenêtre.
+Un panneau à droite permet de choisir les paramètres (polynôme, pixels, zone du
+plan complexe, précision, itérations) puis de lancer le calcul C++ ; l'image se
+met à jour dans la même fenêtre.
+
+Le polynôme s'écrit comme une expression : z^3 - 2z + 2, z^5 - 1, (z-1)(z+2i),
+3z^4 + (1-i)z, ... Ses racines sont calculées ici (numpy) puis transmises au C++.
 
 Utilisation :
     python NewtonFractalsDrawing.py
@@ -16,8 +19,10 @@ Dans la fenêtre :
     h              revenir à la vue de départ
 """
 import argparse
+import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import textwrap
@@ -33,8 +38,11 @@ DOSSIER = os.path.dirname(os.path.abspath(__file__))
 FICHIER_RESULTATS = os.path.join(DOSSIER, "results.txt")
 FICHIER_PARAMETRES = os.path.join(DOSSIER, "parametres.json")   # mémorise le dernier calcul
 
-DEFAUTS = {"largeur": 1000, "hauteur": 1000, "min_x": -2.0, "max_x": 2.0,
+DEFAUTS = {"polynome": "z^3 - 2z + 2", "largeur": 1000, "hauteur": 1000, "min_x": -2.0, "max_x": 2.0,
            "min_y": -2.0, "max_y": 2.0, "eps": 1e-6, "iterations": 50}
+EXEMPLES = ["z^3 - 2z + 2", "z^3 - 1", "z^4 - 1", "z^5 - 1", "z^6 + z^3 - 1",
+            "z^8 + 15z^4 - 16", "(z^2 + 1)(z^2 - 4)", "z^3 - (1 + 2i)z + 1"]
+DEGRE_MAX = 20
 
 # --- Thème ------------------------------------------------------------------
 FOND = "#0e1117"
@@ -48,8 +56,8 @@ ACCENT = "#4cc9f0"
 ACCENT_SURVOL = "#7fdcf6"
 ERREUR = "#ff6b81"
 SUCCES = "#06d6a0"
-COULEURS_RACINES = ["#4cc9f0", "#f72585", "#ffd166", "#06d6a0",
-                    "#9d7dff", "#ff8c42", "#ef476f", "#118ab2"]
+COULEURS_RACINES = ["#4cc9f0", "#f72585", "#ffd166", "#06d6a0", "#9d7dff", "#ff8c42",
+                    "#ef476f", "#118ab2", "#caffbf", "#ffadad", "#a0c4ff", "#fdffb6"]
 COULEUR_NON_CONVERGENCE = "#262a36"
 AIDE = "molette : zoom   ·   clic-glisser : déplacer   ·   h : vue initiale"
 
@@ -61,6 +69,117 @@ def lire_resultats(chemin):
         lignes = [l for l in f.read().splitlines() if l.strip()]
     tableau = np.array(" ".join(lignes).split(), dtype=np.int16).reshape(len(lignes), -1)
     return tableau.T  # results.txt contient une ligne par valeur de x
+
+
+# --- Polynôme ---------------------------------------------------------------
+_JETON = re.compile(r"\s*(?:(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)"   # nombre
+                    r"|([zZxX])"                                                      # variable
+                    r"|([iIjJ])"                                                      # unité imaginaire
+                    r"|(\*\*|[-+*/^()]))")                                            # opérateur
+
+
+def _evaluer(noeud):
+    """Évalue l'expression en polynôme, sans eval : seuls nombres, z, + - * / et puissances entières."""
+    P = np.polynomial.Polynomial
+    if isinstance(noeud, ast.Expression):
+        return _evaluer(noeud.body)
+    if isinstance(noeud, ast.Constant) and isinstance(noeud.value, (int, float, complex)) \
+            and not isinstance(noeud.value, bool):
+        return P([noeud.value])
+    if isinstance(noeud, ast.Name) and noeud.id == "z":
+        return P([0, 1])
+    if isinstance(noeud, ast.UnaryOp) and isinstance(noeud.op, (ast.USub, ast.UAdd)):
+        v = _evaluer(noeud.operand)
+        return -v if isinstance(noeud.op, ast.USub) else v
+    if isinstance(noeud, ast.BinOp):
+        g, d = _evaluer(noeud.left), _evaluer(noeud.right)
+        if isinstance(noeud.op, ast.Add):
+            return g + d
+        if isinstance(noeud.op, ast.Sub):
+            return g - d
+        if isinstance(noeud.op, ast.Mult):
+            return g * d
+        constante = d.trim().degree() == 0
+        if isinstance(noeud.op, ast.Div):
+            if not constante or d.coef[0] == 0:
+                raise ValueError("Polynôme : on ne peut diviser que par un nombre non nul")
+            return g / d.coef[0]
+        if isinstance(noeud.op, ast.Pow):
+            e = d.coef[0]
+            if not constante or np.imag(e) != 0 or np.real(e) != int(np.real(e)) or not 0 <= np.real(e) <= DEGRE_MAX:
+                raise ValueError(f"Polynôme : exposant entier entre 0 et {DEGRE_MAX} attendu")
+            return g ** int(np.real(e))
+    raise ValueError("Polynôme : expression non reconnue")
+
+
+def lire_polynome(texte):
+    """« z^3 - 2z + 2 » → (coefficients du plus haut degré au terme constant, racines triées).
+
+    Accepte : nombres (2, 0.5, 1e-3), z (ou x), i (unité imaginaire), + - * / ^ (ou **),
+    parenthèses, et la multiplication implicite (2z, 3i, z(z+1), (z-1)(z+1))."""
+    s = texte.strip()
+    if not s:
+        raise ValueError("Polynôme vide")
+    jetons, pos = [], 0
+    while pos < len(s):
+        m = _JETON.match(s, pos)
+        if not m:
+            reste = s[pos:].strip()
+            if not reste:
+                break
+            raise ValueError(f"Polynôme : caractère inattendu « {reste[0]} »")
+        pos = m.end()
+        nombre, variable, imaginaire, operateur = m.groups()
+        if nombre:
+            jetons.append(("valeur", nombre))
+        elif variable:
+            jetons.append(("valeur", "z"))
+        elif imaginaire:
+            jetons.append(("valeur", "1j"))
+        else:
+            jetons.append(("op", "**" if operateur == "^" else operateur))
+    # Multiplication implicite : entre une valeur ou « ) » et une valeur ou « ( »
+    morceaux = []
+    for k, (genre, v) in enumerate(jetons):
+        if k and (genre == "valeur" or v == "(") and (jetons[k - 1][0] == "valeur" or jetons[k - 1][1] == ")"):
+            morceaux.append("*")
+        morceaux.append(v)
+    try:
+        arbre = ast.parse(" ".join(morceaux), mode="eval")
+    except SyntaxError:
+        raise ValueError("Polynôme : expression mal écrite")
+    poly = _evaluer(arbre).trim()
+    degre = poly.degree()
+    if degre < 1:
+        raise ValueError("Le polynôme doit être de degré 1 au moins (il faut un z)")
+    if degre > DEGRE_MAX:
+        raise ValueError(f"Degré {degre} trop grand ({DEGRE_MAX} au maximum)")
+    coefs = np.asarray(poly.coef, dtype=complex)[::-1]
+
+    # Racines : les racines multiples sortent en plusieurs exemplaires presque égaux → on les regroupe
+    racines = []
+    for r in np.roots(coefs):
+        for groupe in racines:
+            if abs(groupe[0] - r) <= 1e-6 * max(1, abs(r)):
+                groupe.append(r)
+                break
+        else:
+            racines.append([r])
+    racines = [complex(np.mean(g)) for g in racines]
+    racines = [complex(r.real, 0) if abs(r.imag) <= 1e-12 * max(1, abs(r)) else r for r in racines]
+    racines.sort(key=lambda r: (round(r.real, 9), round(r.imag, 9)))
+    return coefs, racines
+
+
+def texte_complexe(z, chiffres=3):
+    """0.885-0.59i, -1.77, 2i"""
+    re_, im_ = z.real, z.imag
+    if im_ == 0:
+        return f"{re_:.{chiffres}g}"
+    im_txt = "" if abs(abs(im_) - 1) < 1e-12 else f"{abs(im_):.{chiffres}g}"
+    if abs(re_) < 1e-12 * max(1, abs(z)):
+        return f"{'-' if im_ < 0 else ''}{im_txt}i"
+    return f"{re_:.{chiffres}g}{'-' if im_ < 0 else '+'}{im_txt}i"
 
 
 def charger_parametres():
@@ -125,21 +244,25 @@ def styliser_axes(ax):
     ax.set_ylabel("Im(z)", color=TEXTE_DOUX, fontsize=10)
 
 
-def creer_legende(fig, indices, x_centre, y):
-    """Couleur de chaque bassin d'attraction et part de l'image qu'il occupe."""
+def creer_legende(fig, indices, x_centre, y, racines=None):
+    """Couleur de chaque bassin d'attraction (valeur de la racine) et part de l'image qu'il occupe."""
     total = indices.size
+    nb = len(racines) if racines else max(int(indices.max()), 1)
     elements = []
-    for k in range(1, max(int(indices.max()), 1) + 1):
+    for k in range(1, nb + 1):
         part = 100 * np.count_nonzero(indices == k) / total
+        nom = texte_complexe(racines[k - 1]) if racines else f"Racine {k}"
         elements.append(Patch(color=COULEURS_RACINES[(k - 1) % len(COULEURS_RACINES)],
-                              label=f"Racine {k}  ({part:.1f} %)"))
+                              label=f"{nom}  ({part:.1f} %)"))
     non_conv = np.count_nonzero(indices < 1)
     if non_conv:
         elements.append(Patch(color=COULEUR_NON_CONVERGENCE,
                               label=f"Pas de convergence  ({100 * non_conv / total:.1f} %)"))
+    beaucoup = len(elements) > 8
     return fig.legend(handles=elements, loc="center", bbox_to_anchor=(x_centre, y),
-                      ncol=min(len(elements), 4), frameon=False, labelcolor=TEXTE, fontsize=10,
-                      handlelength=1.2, handleheight=1.2, columnspacing=1.8)
+                      ncol=min(len(elements), 6 if beaucoup else 4), frameon=False, labelcolor=TEXTE,
+                      fontsize=8 if beaucoup else 9.5, handlelength=1.2, handleheight=1.2,
+                      columnspacing=1.4 if beaucoup else 1.8)
 
 
 # --- Nombres en écriture scientifique -------------------------------------------
@@ -196,16 +319,25 @@ def sous_titre(p):
     return f"{taille}   ·   centre {centre}   ·   largeur {nombre_sci(lx, 3)} × {nombre_sci(ly, 3)}"
 
 
+def racines_de(p):
+    """Racines du polynôme des paramètres, ou None s'il est illisible."""
+    try:
+        return lire_polynome(p.get("polynome", DEFAUTS["polynome"]))[1]
+    except ValueError:
+        return None
+
+
 def exporter_image(indices, p, chemin):
     """Enregistre la fractale seule (sans le panneau) dans un fichier image."""
     fig = Figure(figsize=(9, 10), facecolor=FOND)
-    ax = fig.add_axes([0.11, 0.15, 0.83, 0.72], facecolor=FOND)
+    ax = fig.add_axes([0.11, 0.14, 0.83, 0.70], facecolor=FOND)
     ax.imshow(colorer(indices), extent=[p["min_x"], p["max_x"], p["min_y"], p["max_y"]],
               origin="lower", interpolation="antialiased")
     styliser_axes(ax)
     fig.text(0.11, 0.945, "Fractale de Newton", color=TEXTE, fontsize=20, fontweight="bold")
-    fig.text(0.11, 0.912, sous_titre(p), color=TEXTE_DOUX, fontsize=10)
-    creer_legende(fig, indices, 0.525, 0.05)
+    fig.text(0.11, 0.912, f"p(z) = {p.get('polynome', DEFAUTS['polynome'])}", color=TEXTE, fontsize=11)
+    fig.text(0.11, 0.887, sous_titre(p), color=TEXTE_DOUX, fontsize=9.5)
+    creer_legende(fig, indices, 0.525, 0.05, racines_de(p))
     fig.savefig(chemin, dpi=150, facecolor=FOND)
 
 
@@ -304,21 +436,24 @@ class Application:
         self.commande = [executable] if executable else None
         self.image = None
         self.legende = None
+        self.racines = racines_de(self.p)   # racines du polynôme de l'image affichée
+        self.num_exemple = 0
 
         self.fig = plt.figure(figsize=(13.5, 8.6), facecolor=FOND)
         if self.fig.canvas.manager is not None:
             self.fig.canvas.manager.set_window_title("Fractale de Newton")
 
         # Zone de l'image
-        self.ax = self.fig.add_axes([0.06, 0.15, 0.57, 0.72], facecolor=FOND)
+        self.ax = self.fig.add_axes([0.06, 0.13, 0.57, 0.71], facecolor=FOND)
         styliser_axes(self.ax)
         self.ax.format_coord = self.coordonnees
         self.fig.text(0.06, 0.945, "Fractale de Newton", color=TEXTE, fontsize=20, fontweight="bold")
-        self.texte_sous_titre = self.fig.text(0.06, 0.912, "", color=TEXTE_DOUX, fontsize=10)
+        self.texte_polynome = self.fig.text(0.06, 0.912, "", color=TEXTE, fontsize=11)
+        self.texte_sous_titre = self.fig.text(0.06, 0.886, "", color=TEXTE_DOUX, fontsize=9.5)
         self.texte_vide = self.ax.text(0.5, 0.5, "Choisis les paramètres à droite\npuis clique sur « Calculer »",
                                        transform=self.ax.transAxes, ha="center", va="center",
                                        color=TEXTE_DOUX, fontsize=13, linespacing=1.8)
-        self.fig.text(0.345, 0.02, AIDE, color=TEXTE_DOUX, fontsize=9, ha="center")
+        self.fig.text(0.82, 0.05, AIDE, color=TEXTE_DOUX, fontsize=8.5, ha="center")
 
         self.construire_panneau()
         self.navigation = Navigation(self.ax, quand_limite=lambda: self.statut(
@@ -335,48 +470,66 @@ class Application:
                         TEXTE_DOUX if self.commande else ERREUR)
 
     # -- Panneau de paramètres --
+    def champ(self, cle, rect, texte, taille_police=8.5):
+        ax = self.fig.add_axes(rect)
+        boite = TextBox(ax, "", initial=texte, color=CHAMP, hovercolor=CHAMP_SURVOL, textalignment="left")
+        boite.text_disp.set_color(TEXTE)
+        boite.text_disp.set_fontsize(taille_police)
+        if hasattr(boite, "cursor"):
+            boite.cursor.set_color(TEXTE)
+        for cote in ax.spines.values():
+            cote.set_color(BORDURE)
+        self.champs[cle] = boite
+
     def construire_panneau(self):
-        x0, larg, col2 = 0.685, 0.27, 0.83
+        x0, larg, col2 = 0.685, 0.275, 0.83
         self.fig.patches.append(FancyBboxPatch(
-            (0.665, 0.05), 0.31, 0.89, boxstyle="round,pad=0,rounding_size=0.008",
+            (0.665, 0.035), 0.31, 0.915, boxstyle="round,pad=0,rounding_size=0.008",
             transform=self.fig.transFigure, facecolor=PANNEAU, edgecolor="#232838", zorder=-1))
-        self.fig.text(x0, 0.895, "Paramètres", color=TEXTE, fontsize=14, fontweight="bold")
+        self.fig.text(x0, 0.905, "Paramètres", color=TEXTE, fontsize=14, fontweight="bold")
+
+        def section(y_champ, titre):
+            self.fig.text(x0, y_champ + 0.071, titre, color=ACCENT, fontsize=8.5, fontweight="bold")
+
+        def libelle(x, y_champ, texte):
+            self.fig.text(x, y_champ + 0.042, texte, color=TEXTE_DOUX, fontsize=9)
 
         self.champs = {}
-        textes_initiaux = self.textes(self.p)
-        sections = {"largeur": (0.845, "IMAGE"), "min_x": (0.725, "FENÊTRE DU PLAN COMPLEXE"),
-                    "eps": (0.535, "CONVERGENCE")}
-        y_ligne = {"largeur": 0.775, "min_x": 0.655, "min_y": 0.585, "eps": 0.465}
-        y = None
-        for n, (cle, libelle, _) in enumerate(CHAMPS):
-            if cle in sections:
-                ys, titre = sections[cle]
-                self.fig.text(x0, ys, titre, color=ACCENT, fontsize=8.5, fontweight="bold")
-            if cle in y_ligne:
-                y = y_ligne[cle]
-            x = x0 if n % 2 == 0 else col2
-            self.fig.text(x, y + 0.042, libelle, color=TEXTE_DOUX, fontsize=9)
-            ax = self.fig.add_axes([x, y, 0.13, 0.036])
-            boite = TextBox(ax, "", initial=textes_initiaux[cle], color=CHAMP, hovercolor=CHAMP_SURVOL,
-                            textalignment="left")
-            boite.text_disp.set_color(TEXTE)
-            boite.text_disp.set_fontsize(8.5)
-            if hasattr(boite, "cursor"):
-                boite.cursor.set_color(TEXTE)
-            for cote in ax.spines.values():
-                cote.set_color(BORDURE)
-            self.champs[cle] = boite
+        t = self.textes(self.p)
 
-        self.bouton_vue = self.bouton([x0, 0.37, larg, 0.048], "Recalculer la vue affichée",
+        # Polynôme : champ large + bouton qui fait défiler des exemples
+        y = 0.79
+        section(y, "POLYNÔME")
+        libelle(x0, y, "p(z) =   (ex. z^3 - 2z + 2,  (z-1)(z+i),  z^5 - 1)")
+        self.champ("polynome", [x0, y, 0.195, 0.036], t["polynome"], taille_police=10)
+        self.bouton_exemple = self.bouton([x0 + 0.203, y, 0.072, 0.036], "Exemple ▸", self.exemple_suivant,
+                                          taille=8.5)
+
+        # Pixels, fenêtre, convergence : deux champs par ligne
+        lignes = [(0.674, "IMAGE", ("largeur", "hauteur")),
+                  (0.557, "FENÊTRE DU PLAN COMPLEXE", ("min_x", "max_x")),
+                  (0.487, None, ("min_y", "max_y")),
+                  (0.369, "CONVERGENCE", ("eps", "iterations"))]
+        noms = {cle: nom for cle, nom, _ in CHAMPS}
+        for y, titre, cles in lignes:
+            if titre:
+                section(y, titre)
+            for x, cle in zip((x0, col2), cles):
+                libelle(x, y, noms[cle])
+                self.champ(cle, [x, y, 0.13, 0.036], t[cle])
+
+        self.bouton_vue = self.bouton([x0, 0.29, larg, 0.045], "Recalculer la vue affichée",
                                       self.recalculer_vue)
-        self.bouton_carre = self.bouton([x0, 0.31, 0.13, 0.044], "Pixels carrés", self.pixels_carres)
-        self.bouton_defaut = self.bouton([col2 - 0.005, 0.31, 0.13, 0.044], "Valeurs par défaut",
-                                         self.valeurs_defaut)
-        self.bouton_calcul = self.bouton([x0, 0.215, larg, 0.065], "Calculer", self.calculer,
+        petit = (larg - 0.014) / 3
+        self.bouton_carre = self.bouton([x0, 0.237, petit, 0.042], "Pixels carrés", self.pixels_carres,
+                                        taille=9)
+        self.bouton_defaut = self.bouton([x0 + petit + 0.007, 0.237, petit, 0.042], "Par défaut",
+                                         self.valeurs_defaut, taille=9)
+        self.bouton_export = self.bouton([x0 + 2 * (petit + 0.007), 0.237, petit, 0.042], "Export PNG",
+                                         self.enregistrer, taille=9)
+        self.bouton_calcul = self.bouton([x0, 0.15, larg, 0.06], "Calculer", self.calculer,
                                          couleur=ACCENT, survol=ACCENT_SURVOL, texte=FOND, taille=13)
-        self.bouton_export = self.bouton([x0, 0.075, larg, 0.044], "Enregistrer l'image (PNG)",
-                                         self.enregistrer)
-        self.texte_statut = self.fig.text(x0, 0.175, "", color=TEXTE_DOUX, fontsize=9.5, va="top")
+        self.texte_statut = self.fig.text(x0, 0.128, "", color=TEXTE_DOUX, fontsize=9.5, va="top")
 
     def bouton(self, rect, libelle, action, couleur=CHAMP, survol=CHAMP_SURVOL, texte=TEXTE, taille=10):
         ax = self.fig.add_axes(rect)
@@ -396,7 +549,9 @@ class Application:
         écriture scientifique, avec assez de chiffres pour rester distinctes."""
         t = {}
         for cle, v in valeurs.items():
-            if cle in ("largeur", "hauteur", "iterations"):
+            if cle == "polynome":
+                t[cle] = str(v)
+            elif cle in ("largeur", "hauteur", "iterations"):
                 t[cle] = str(int(v))
             elif cle == "eps":
                 t[cle] = nombre_sci(v, 6)
@@ -423,7 +578,8 @@ class Application:
 
     def lire_champs(self):
         """Lit et vérifie les champs ; lève ValueError avec un message clair."""
-        p = {}
+        p = {"polynome": " ".join(self.champs["polynome"].text.split())}
+        p["coefs"], p["racines"] = lire_polynome(p["polynome"])   # lève ValueError si illisible
         for cle, libelle, type_ in CHAMPS:
             texte = self.champs[cle].text.strip().replace(",", ".")
             try:
@@ -470,6 +626,10 @@ class Application:
         args = ["--taille", str(p["largeur"]), str(p["hauteur"]),
                 "--bornes", repr(p["min_x"]), repr(p["max_x"]), repr(p["min_y"]), repr(p["max_y"]),
                 "--eps", repr(p["eps"]), "--iterations", str(p["iterations"])]
+        for option, valeurs in (("--coefs", p["coefs"]), ("--racines", p["racines"])):
+            args += [option, str(len(valeurs))]
+            for v in valeurs:
+                args += [repr(float(v.real)), repr(float(v.imag))]
         debut = time.perf_counter()
         try:
             r = subprocess.run(self.commande + args, cwd=DOSSIER, env=environnement_calcul(),
@@ -489,8 +649,16 @@ class Application:
         duree = time.perf_counter() - debut
 
         self.afficher_resultat(indices, p)
-        sauvegarder_parametres(p)
-        self.statut(f"Terminé en {duree:.2f} s", SUCCES)
+        sauvegarder_parametres({k: v for k, v in p.items() if k not in ("coefs", "racines")})
+        self.statut(f"Terminé en {duree:.2f} s   ·   {len(p['racines'])} racine(s)", SUCCES)
+
+    def exemple_suivant(self, _=None):
+        """Met le polynôme d'exemple suivant dans le champ (sans lancer le calcul)."""
+        self.num_exemple = (self.num_exemple + 1) % len(EXEMPLES)
+        if EXEMPLES[self.num_exemple] == self.champs["polynome"].text.strip():
+            self.num_exemple = (self.num_exemple + 1) % len(EXEMPLES)
+        self.ecrire("polynome", EXEMPLES[self.num_exemple])
+        self.statut("Exemple choisi : clique sur Calculer", TEXTE_DOUX)
 
     def recalculer_vue(self, _=None):
         """Recalcule en pleine résolution la zone actuellement affichée (après un zoom)."""
@@ -534,8 +702,9 @@ class Application:
     # -- Affichage --
     def afficher_resultat(self, indices, p):
         self.indices = indices
-        self.p = dict(p)
+        self.p = {k: v for k, v in p.items() if k not in ("coefs", "racines")}
         self.p["hauteur"], self.p["largeur"] = indices.shape
+        self.racines = p["racines"] if "racines" in p else racines_de(self.p)
         etendue = [p["min_x"], p["max_x"], p["min_y"], p["max_y"]]
 
         self.texte_vide.set_visible(False)
@@ -551,7 +720,8 @@ class Application:
 
         if self.legende is not None:
             self.legende.remove()
-        self.legende = creer_legende(self.fig, indices, 0.345, 0.065)
+        self.legende = creer_legende(self.fig, indices, 0.345, 0.04, self.racines)
+        self.texte_polynome.set_text(f"p(z) = {self.p.get('polynome', DEFAUTS['polynome'])}")
         self.texte_sous_titre.set_text(sous_titre(self.p))
         self.navigation.reinitialiser()
         self.fig.canvas.draw_idle()
@@ -572,7 +742,12 @@ class Application:
         j = int((y - p["min_y"]) / (p["max_y"] - p["min_y"]) * hauteur)
         if 0 <= i < largeur and 0 <= j < hauteur:
             k = self.indices[j, i]
-            texte += f"   →   racine {k}" if k >= 1 else "   →   pas de convergence"
+            if k < 1:
+                texte += "   →   pas de convergence"
+            elif self.racines and k <= len(self.racines):
+                texte += f"   →   racine {k} = {texte_complexe(self.racines[k - 1], 6)}"
+            else:
+                texte += f"   →   racine {k}"
         return texte
 
 
@@ -584,6 +759,7 @@ def lire_arguments():
                    help="zone du plan complexe de results.txt (sinon : celle du dernier calcul)")
     p.add_argument("--eps", type=float, help="précision utilisée pour results.txt")
     p.add_argument("--iterations", type=int, help="nombre d'itérations utilisé pour results.txt")
+    p.add_argument("--polynome", help="polynôme utilisé pour results.txt, ex. \"z^3 - 2z + 2\"")
     p.add_argument("--exe", help="chemin du programme C++ compilé (sinon recherche automatique)")
     p.add_argument("--enregistrer", metavar="IMAGE.png",
                    help="enregistre l'image de results.txt dans ce fichier, sans ouvrir la fenêtre")
@@ -606,6 +782,8 @@ def preparer(args):
             p["eps"] = args.eps
         if args.iterations is not None:
             p["iterations"] = args.iterations
+        if args.polynome:
+            p["polynome"] = args.polynome
         if existe:
             indices = lire_resultats(args.fichier)
     elif memo and existe and abs(os.path.getmtime(args.fichier) - memo.get("fichier_date", -1)) < 1e-3:
