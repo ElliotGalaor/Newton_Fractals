@@ -15,3 +15,4 @@ Release/
 # Fichiers crees par l interface Python
 parametres.json
 fractale_*.png
+results.bin

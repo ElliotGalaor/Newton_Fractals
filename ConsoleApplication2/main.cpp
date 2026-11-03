@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <algorithm>
+#include <cstdint>
 #include <math.h>
 #include "CNum.h"
 #include "Tableau.h"
@@ -110,6 +111,22 @@ void write_file(const Tableau& tab) {
     MyFile.close();
 }
 
+// Version binaire, bien plus rapide à écrire et à relire (utilisée par l'interface) :
+// en-tête de 8 octets (dim_x puis dim_y, entiers 32 bits little-endian), puis un octet
+// signé par pixel, dans le même ordre que results.txt (ligne par ligne selon x).
+static bool write_binary(const Tableau& tab, const string& chemin) {
+    const int32_t dims[2] = { tab.getDimX(), tab.getDimY() };
+    vector<int8_t> octets((size_t)dims[0] * dims[1]);
+    for (int i = 0; i < dims[0]; i++)
+        for (int k = 0; k < dims[1]; k++)
+            octets[(size_t)i * dims[1] + k] = (int8_t)tab.getIndice(i, k);
+    ofstream f(chemin, ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(dims), sizeof(dims));
+    f.write(reinterpret_cast<const char*>(octets.data()), (streamsize)octets.size());
+    return (bool)f;
+}
+
 // Paramètres d'un calcul
 struct Parametres {
     int dim_x = 1000;
@@ -118,12 +135,13 @@ struct Parametres {
     double min_y = -2, max_y = 2;
     double eps = 1e-6;
     int iterations = 50;
+    string fichier_binaire;                  // si non vide : sortie binaire dans ce fichier au lieu de results.txt
     vector<CNum> coefs = COEFS_DEFAUT;       // du plus haut degré au terme constant
     vector<CNum> racines = RACINES_DEFAUT;
 };
 
-// Calcule la fractale, écrit results.txt et affiche les temps
-static void calculer(const Parametres& p) {
+// Calcule la fractale, écrit results.txt (ou le fichier binaire) et affiche les temps
+static bool calculer(const Parametres& p) {
     coefs = p.coefs;
     zero_list = p.racines;
     // Seuil d'attribution : 0.1, réduit si des racines sont très proches l'une de l'autre
@@ -137,10 +155,17 @@ static void calculer(const Parametres& p) {
     Tableau res(p.dim_x, p.dim_y, p.max_x, p.min_x, p.max_y, p.min_y);
     map_fractale(res, p.eps, p.iterations);
     auto t1 = chrono::steady_clock::now();
-    write_file(res);
+    if (p.fichier_binaire.empty()) {
+        write_file(res);
+    }
+    else if (!write_binary(res, p.fichier_binaire)) {
+        cerr << "Ecriture impossible : " << p.fichier_binaire << endl;
+        return false;
+    }
     auto t2 = chrono::steady_clock::now();
     cout << "Calcul : " << chrono::duration<double>(t1 - t0).count() << " s, "
          << "ecriture : " << chrono::duration<double>(t2 - t1).count() << " s" << endl;
+    return true;
 }
 
 void Newton_Fractals(int dim_x, int dim_y, double max_x = 2, double min_x = -2, double max_y = 2, double min_y = -2, double eps = 1e-6, int iterations = 50) {
@@ -170,6 +195,8 @@ static void afficher_aide() {
             "                                      au terme constant (defaut z^3 - 2z + 2)\n"
             "  --racines N re1 im1 ... reN imN     racines du polynome (obligatoire avec --coefs) ;\n"
             "                                      leur ordre donne les numeros 1..N de results.txt\n"
+            "  --binaire FICHIER                   ecrit le resultat en binaire (en-tete dim_x, dim_y\n"
+            "                                      en int32, puis un int8 par pixel) au lieu de results.txt\n"
             "Sans option : calcul par defaut puis ouverture du graphique.\n";
 }
 
@@ -207,6 +234,11 @@ static bool lire_arguments(int argc, char* argv[], Parametres& p, string& erreur
     bool coefs_lus = false, racines_lues = false;
     for (int a = 1; a < argc; a++) {
         string opt = argv[a];
+        if (opt == "--binaire") {
+            if (a + 1 >= argc) { erreur = "Nom de fichier manquant apres --binaire"; return false; }
+            p.fichier_binaire = argv[++a];
+            continue;
+        }
         if (opt == "--coefs" || opt == "--racines") {
             vector<CNum>& cible = (opt == "--coefs") ? p.coefs : p.racines;
             if (!lire_complexes(argc, argv, a, cible, erreur)) return false;
@@ -248,8 +280,7 @@ int main(int argc, char* argv[])
             afficher_aide();
             return 1;
         }
-        calculer(p);
-        return 0;
+        return calculer(p) ? 0 : 1;
     }
 
     //affiche_terminal_simple(100, 150);
