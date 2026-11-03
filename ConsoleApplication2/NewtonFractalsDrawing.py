@@ -6,6 +6,8 @@ met à jour dans la même fenêtre.
 
 Le polynôme s'écrit comme une expression : z^3 - 2z + 2, z^5 - 1, (z-1)(z+2i),
 3z^4 + (1-i)z, ... Ses racines sont calculées ici (numpy) puis transmises au C++.
+Le sélecteur « Racines » permet aussi de donner directement les racines
+(1 ; -1 ; 0.5+2i) : le polynôme est alors le produit des (z - racine).
 
 Utilisation :
     python NewtonFractalsDrawing.py
@@ -17,6 +19,7 @@ Dans la fenêtre :
     molette        zoom centré sur la souris
     clic-glisser   déplacer la vue
     h              revenir à la vue de départ
+(la fenêtre s'ouvre agrandie, sur tout l'écran)
 """
 import argparse
 import ast
@@ -38,10 +41,17 @@ DOSSIER = os.path.dirname(os.path.abspath(__file__))
 FICHIER_RESULTATS = os.path.join(DOSSIER, "results.txt")
 FICHIER_PARAMETRES = os.path.join(DOSSIER, "parametres.json")   # mémorise le dernier calcul
 
-DEFAUTS = {"polynome": "z^3 - 2z + 2", "largeur": 1000, "hauteur": 1000, "min_x": -2.0, "max_x": 2.0,
+# mode : "polynome" (on saisit p(z)) ou "racines" (on saisit les racines, p(z) = ∏(z - r))
+DEFAUTS = {"mode": "polynome", "polynome": "z^3 - 2z + 2", "racines_texte": "",
+           "largeur": 1000, "hauteur": 1000, "min_x": -2.0, "max_x": 2.0,
            "min_y": -2.0, "max_y": 2.0, "eps": 1e-6, "iterations": 50}
-EXEMPLES = ["z^3 - 2z + 2", "z^3 - 1", "z^4 - 1", "z^5 - 1", "z^6 + z^3 - 1",
-            "z^8 + 15z^4 - 16", "(z^2 + 1)(z^2 - 4)", "z^3 - (1 + 2i)z + 1"]
+EXEMPLES = {"polynome": ["z^3 - 2z + 2", "z^3 - 1", "z^4 - 1", "z^5 - 1", "z^6 + z^3 - 1",
+                         "z^8 + 15z^4 - 16", "(z^2 + 1)(z^2 - 4)", "z^3 - (1 + 2i)z + 1"],
+            "racines": ["1 ; -1 ; i ; -i", "0 ; 1 ; 2", "1 ; -0.5+0.866i ; -0.5-0.866i",
+                        "1+i ; 1-i ; -2 ; 0.5i", "-1 ; 1 ; 1.5i ; -1.5i ; 0", "1 ; 1 ; -1",
+                        "2 ; 2i ; -2 ; -2i ; 0.3+0.3i"]}
+LIBELLES_MODE = {"polynome": "p(z) =   (ex. z^3 - 2z + 2,  (z-1)(z+i),  z^5 - 1)",
+                 "racines": "Racines, séparées par « ; »   (ex. 1 ; -1 ; 0.5+2i)"}
 DEGRE_MAX = 20
 
 # --- Thème ------------------------------------------------------------------
@@ -112,14 +122,11 @@ def _evaluer(noeud):
     raise ValueError("Polynôme : expression non reconnue")
 
 
-def lire_polynome(texte):
-    """« z^3 - 2z + 2 » → (coefficients du plus haut degré au terme constant, racines triées).
-
-    Accepte : nombres (2, 0.5, 1e-3), z (ou x), i (unité imaginaire), + - * / ^ (ou **),
-    parenthèses, et la multiplication implicite (2z, 3i, z(z+1), (z-1)(z+1))."""
+def _vers_polynome(texte, contexte="Polynôme"):
+    """Expression → objet Polynomial de numpy (lève ValueError avec un message clair)."""
     s = texte.strip()
     if not s:
-        raise ValueError("Polynôme vide")
+        raise ValueError(f"{contexte} : rien n'est écrit")
     jetons, pos = [], 0
     while pos < len(s):
         m = _JETON.match(s, pos)
@@ -127,7 +134,7 @@ def lire_polynome(texte):
             reste = s[pos:].strip()
             if not reste:
                 break
-            raise ValueError(f"Polynôme : caractère inattendu « {reste[0]} »")
+            raise ValueError(f"{contexte} : caractère inattendu « {reste[0]} »")
         pos = m.end()
         nombre, variable, imaginaire, operateur = m.groups()
         if nombre:
@@ -147,28 +154,127 @@ def lire_polynome(texte):
     try:
         arbre = ast.parse(" ".join(morceaux), mode="eval")
     except SyntaxError:
-        raise ValueError("Polynôme : expression mal écrite")
-    poly = _evaluer(arbre).trim()
+        raise ValueError(f"{contexte} : expression mal écrite")
+    try:
+        return _evaluer(arbre).trim()
+    except ValueError as e:
+        raise ValueError(str(e).replace("Polynôme", contexte, 1))
+
+
+def grouper_racines(valeurs):
+    """Regroupe les valeurs presque égales (racine multiple) → [(valeur, multiplicité)], triées.
+    np.roots éparpille une racine multiple (≈1e-5 pour une racine triple), d'où la tolérance."""
+    groupes = []
+    for r in valeurs:
+        r = complex(r)
+        for g in groupes:
+            if abs(g[0] - r) <= 2e-4 * max(1, abs(r)):
+                g.append(r)
+                break
+        else:
+            groupes.append([r])
+    resultat = []
+    for g in groupes:
+        v = complex(np.mean(g))
+        if abs(v.imag) <= 1e-12 * max(1, abs(v)):
+            v = complex(v.real, 0)
+        if abs(v.real) <= 1e-12 * max(1, abs(v)):
+            v = complex(0, v.imag)
+        resultat.append((v, len(g)))
+    resultat.sort(key=lambda vm: (round(vm[0].real, 9), round(vm[0].imag, 9)))
+    return resultat
+
+
+def nettoyer(coefs, tolerance=1e-13):
+    """Met à zéro les parties réelles / imaginaires négligeables (bruit de calcul)."""
+    c = np.array(coefs, dtype=complex)
+    m = max(np.abs(c).max(), 1e-300)
+    re_, im_ = c.real.copy(), c.imag.copy()
+    re_[np.abs(re_) < tolerance * m] = 0
+    im_[np.abs(im_) < tolerance * m] = 0
+    return re_ + 1j * im_
+
+
+def lire_polynome(texte):
+    """« z^3 - 2z + 2 » → (coefficients du plus haut degré au terme constant, racines distinctes triées).
+
+    Accepte : nombres (2, 0.5, 1e-3), z (ou x), i (unité imaginaire), + - * / ^ (ou **),
+    parenthèses, et la multiplication implicite (2z, 3i, z(z+1), (z-1)(z+1))."""
+    poly = _vers_polynome(texte)
     degre = poly.degree()
     if degre < 1:
         raise ValueError("Le polynôme doit être de degré 1 au moins (il faut un z)")
     if degre > DEGRE_MAX:
         raise ValueError(f"Degré {degre} trop grand ({DEGRE_MAX} au maximum)")
     coefs = np.asarray(poly.coef, dtype=complex)[::-1]
+    return coefs, [v for v, _ in grouper_racines(np.roots(coefs))]
 
-    # Racines : les racines multiples sortent en plusieurs exemplaires presque égaux → on les regroupe
+
+def lire_racines(texte):
+    """« 1 ; -1 ; 0.5+2i » (ou « 1, -1, 2i ») → liste des racines, répétitions comprises.
+
+    Séparateur « ; » (la virgule peut alors servir de virgule décimale) ou « , ».
+    Chaque racine peut être une petite expression : 1+i, 1/3, (1+i)/2."""
+    s = texte.strip()
+    if not s:
+        raise ValueError("Racines : rien n'est écrit")
+    morceaux = [m.replace(",", ".") for m in s.split(";")] if ";" in s else s.split(",")
     racines = []
-    for r in np.roots(coefs):
-        for groupe in racines:
-            if abs(groupe[0] - r) <= 1e-6 * max(1, abs(r)):
-                groupe.append(r)
-                break
+    for k, m in enumerate(morceaux, 1):
+        if not m.strip():
+            raise ValueError(f"Racine {k} : vide (séparateur en trop ?)")
+        valeur = _vers_polynome(m, f"Racine {k}")
+        if valeur.degree() > 0:
+            raise ValueError(f"Racine {k} : z n'a pas sa place ici, il faut un nombre")
+        racines.append(complex(valeur.coef[0]))
+    if len(racines) > DEGRE_MAX:
+        raise ValueError(f"{len(racines)} racines : {DEGRE_MAX} au maximum")
+    return racines
+
+
+def depuis_racines(racines):
+    """Racines (répétitions comprises) → (coefficients de ∏(z - r), racines distinctes triées)."""
+    return nettoyer(np.poly(racines)), [v for v, _ in grouper_racines(racines)]
+
+
+def texte_racines(coefs):
+    """Racines d'un polynôme, écrites pour le champ « Racines » (multiplicités répétées)."""
+    morceaux = []
+    for v, m in grouper_racines(np.roots(coefs)):
+        morceaux += [texte_complexe(v, 10)] * m
+    return " ; ".join(morceaux)
+
+
+def texte_polynome(coefs, chiffres=9):
+    """Coefficients (du plus haut degré au terme constant) → « z^3 - 2z + 2 ».
+    Ce qui est négligeable devant le plus grand coefficient (< 1e-9) est mis à zéro et
+    l'affichage garde 9 chiffres : on efface ainsi le bruit d'arrondi (ex. 2e-10 z^2,
+    0.9999999998 z^3 après un passage par les racines)."""
+    coefs = nettoyer(coefs, tolerance=1e-9)
+    degre = len(coefs) - 1
+    termes = []
+    for k, c in enumerate(coefs):
+        puissance = degre - k
+        if c == 0:
+            continue
+        monome = "" if puissance == 0 else ("z" if puissance == 1 else f"z^{puissance}")
+        if c.imag != 0 and c.real != 0:          # coefficient vraiment complexe : entre parenthèses
+            signe, corps = "+", f"({texte_complexe(c, chiffres)})" + monome
         else:
-            racines.append([r])
-    racines = [complex(np.mean(g)) for g in racines]
-    racines = [complex(r.real, 0) if abs(r.imag) <= 1e-12 * max(1, abs(r)) else r for r in racines]
-    racines.sort(key=lambda r: (round(r.real, 9), round(r.imag, 9)))
-    return coefs, racines
+            v = c.real if c.imag == 0 else c.imag
+            signe = "-" if v < 0 else "+"
+            nombre = f"{abs(v):.{chiffres}g}"
+            suffixe_i = "" if c.imag == 0 else "i"
+            if nombre == "1" and monome and not suffixe_i:
+                nombre = ""
+            corps = f"{nombre}{suffixe_i}{monome}"
+        termes.append((signe, corps))
+    if not termes:
+        return "0"
+    texte = ("-" if termes[0][0] == "-" else "") + termes[0][1]
+    for signe, corps in termes[1:]:
+        texte += f" {signe} {corps}"
+    return texte
 
 
 def texte_complexe(z, chiffres=3):
@@ -319,12 +425,42 @@ def sous_titre(p):
     return f"{taille}   ·   centre {centre}   ·   largeur {nombre_sci(lx, 3)} × {nombre_sci(ly, 3)}"
 
 
+def polynome_de(p):
+    """(coefficients, racines distinctes) du polynôme des paramètres, selon le mode de saisie."""
+    if p.get("mode") == "racines":
+        return depuis_racines(lire_racines(p.get("racines_texte", "")))
+    return lire_polynome(p.get("polynome", DEFAUTS["polynome"]))
+
+
 def racines_de(p):
     """Racines du polynôme des paramètres, ou None s'il est illisible."""
     try:
-        return lire_polynome(p.get("polynome", DEFAUTS["polynome"]))[1]
+        return polynome_de(p)[1]
     except ValueError:
         return None
+
+
+def titre_polynome(p, longueur_max=95):
+    """« p(z) = z^3 - 2z + 2 », ou en mode racines la forme factorisée « p(z) = (z - 1)(z + i) »."""
+    if p.get("mode") == "racines":
+        try:
+            facteurs = []
+            for v, m in grouper_racines(lire_racines(p.get("racines_texte", ""))):
+                if v == 0:
+                    f = "z"
+                elif v.imag == 0:
+                    f = f"(z {'-' if v.real > 0 else '+'} {abs(v.real):.4g})"
+                elif v.real == 0:
+                    f = f"(z {'-' if v.imag > 0 else '+'} {texte_complexe(complex(0, abs(v.imag)), 4)})"
+                else:
+                    f = f"(z - ({texte_complexe(v, 4)}))"
+                facteurs.append(f + (f"^{m}" if m > 1 else ""))
+            texte = "p(z) = " + "".join(facteurs)
+        except ValueError:
+            texte = "racines : " + p.get("racines_texte", "")
+    else:
+        texte = "p(z) = " + p.get("polynome", DEFAUTS["polynome"])
+    return texte if len(texte) <= longueur_max else texte[:longueur_max - 1] + "…"
 
 
 def exporter_image(indices, p, chemin):
@@ -335,7 +471,7 @@ def exporter_image(indices, p, chemin):
               origin="lower", interpolation="antialiased")
     styliser_axes(ax)
     fig.text(0.11, 0.945, "Fractale de Newton", color=TEXTE, fontsize=20, fontweight="bold")
-    fig.text(0.11, 0.912, f"p(z) = {p.get('polynome', DEFAUTS['polynome'])}", color=TEXTE, fontsize=11)
+    fig.text(0.11, 0.912, titre_polynome(p, 80), color=TEXTE, fontsize=11)
     fig.text(0.11, 0.887, sous_titre(p), color=TEXTE_DOUX, fontsize=9.5)
     creer_legende(fig, indices, 0.525, 0.05, racines_de(p))
     fig.savefig(chemin, dpi=150, facecolor=FOND)
@@ -437,7 +573,8 @@ class Application:
         self.image = None
         self.legende = None
         self.racines = racines_de(self.p)   # racines du polynôme de l'image affichée
-        self.num_exemple = 0
+        self.mode = self.p.get("mode", "polynome")   # ce que contient le champ : p(z) ou racines
+        self.num_exemple = {"polynome": 0, "racines": -1}
 
         self.fig = plt.figure(figsize=(13.5, 8.6), facecolor=FOND)
         if self.fig.canvas.manager is not None:
@@ -453,7 +590,8 @@ class Application:
         self.texte_vide = self.ax.text(0.5, 0.5, "Choisis les paramètres à droite\npuis clique sur « Calculer »",
                                        transform=self.ax.transAxes, ha="center", va="center",
                                        color=TEXTE_DOUX, fontsize=13, linespacing=1.8)
-        self.fig.text(0.82, 0.05, AIDE, color=TEXTE_DOUX, fontsize=8.5, ha="center")
+        self.texte_aide = self.fig.text(0.82, 0.04, AIDE, color=TEXTE_DOUX, fontsize=8.5, ha="center",
+                                        va="bottom", linespacing=1.6)
 
         self.construire_panneau()
         self.navigation = Navigation(self.ax, quand_limite=lambda: self.statut(
@@ -468,6 +606,33 @@ class Application:
             self.statut("Prêt." if self.commande else
                         "Programme C++ introuvable : compile-le (make) ou passe --exe.",
                         TEXTE_DOUX if self.commande else ERREUR)
+
+    # -- Fenêtre --
+    def agrandir_au_lancement(self):
+        """Agrandit la fenêtre (maximisée, avec sa barre de titre) dès qu'elle est affichée."""
+        # Un petit délai : la fenêtre doit exister à l'écran avant d'être agrandie
+        self._minuteur = self.fig.canvas.new_timer(interval=100)
+        self._minuteur.single_shot = True
+        self._minuteur.add_callback(self.agrandir)
+        self._minuteur.start()
+
+    def agrandir(self):
+        manager = self.fig.canvas.manager
+        if manager is None:
+            return
+        fenetre = getattr(manager, "window", None)
+        # La méthode dépend de la bibliothèque d'affichage utilisée par matplotlib
+        methodes = (lambda: fenetre.state("zoomed"),            # Tk (Windows)
+                    lambda: fenetre.attributes("-zoomed", True),  # Tk (Linux)
+                    lambda: fenetre.showMaximized(),             # Qt
+                    lambda: fenetre.maximize(),                  # GTK
+                    lambda: manager.frame.Maximize(True))        # Wx
+        for agrandir in methodes:
+            try:
+                agrandir()
+                return
+            except Exception:   # méthode absente pour cette bibliothèque : on essaie la suivante
+                pass
 
     # -- Panneau de paramètres --
     def champ(self, cle, rect, texte, taille_police=8.5):
@@ -497,11 +662,19 @@ class Application:
         self.champs = {}
         t = self.textes(self.p)
 
-        # Polynôme : champ large + bouton qui fait défiler des exemples
+        # Polynôme : sélecteur p(z) / racines, champ large, bouton qui fait défiler des exemples
         y = 0.79
         section(y, "POLYNÔME")
-        libelle(x0, y, "p(z) =   (ex. z^3 - 2z + 2,  (z-1)(z+i),  z^5 - 1)")
+        self.boutons_mode = {
+            "polynome": self.bouton([x0 + 0.135, y + 0.064, 0.068, 0.03], "p(z)",
+                                    lambda _: self.changer_mode("polynome"), taille=9),
+            "racines": self.bouton([x0 + 0.207, y + 0.064, 0.068, 0.03], "Racines",
+                                   lambda _: self.changer_mode("racines"), taille=9),
+        }
+        self.texte_libelle_poly = self.fig.text(x0, y + 0.042, LIBELLES_MODE[self.mode],
+                                                color=TEXTE_DOUX, fontsize=9)
         self.champ("polynome", [x0, y, 0.195, 0.036], t["polynome"], taille_police=10)
+        self.colorer_boutons_mode()
         self.bouton_exemple = self.bouton([x0 + 0.203, y, 0.072, 0.036], "Exemple ▸", self.exemple_suivant,
                                           taille=8.5)
 
@@ -550,7 +723,8 @@ class Application:
         t = {}
         for cle, v in valeurs.items():
             if cle == "polynome":
-                t[cle] = str(v)
+                # Le champ contient p(z) ou la liste des racines, selon le mode
+                t[cle] = str(valeurs.get("racines_texte", "") if valeurs.get("mode") == "racines" else v)
             elif cle in ("largeur", "hauteur", "iterations"):
                 t[cle] = str(int(v))
             elif cle == "eps":
@@ -576,10 +750,50 @@ class Application:
             if cle in self.champs:
                 self.ecrire(cle, texte)
 
+    def lire_polynome_saisi(self):
+        """Lit le champ polynôme selon le mode. Renvoie les deux écritures (p(z) et racines),
+        les coefficients et les racines distinctes ; lève ValueError si illisible."""
+        texte = " ".join(self.champs["polynome"].text.split())
+        if self.mode == "racines":
+            coefs, racines = depuis_racines(lire_racines(texte))
+            return {"mode": "racines", "racines_texte": texte, "polynome": texte_polynome(coefs),
+                    "coefs": coefs, "racines": racines}
+        coefs, racines = lire_polynome(texte)
+        return {"mode": "polynome", "polynome": texte, "racines_texte": texte_racines(coefs),
+                "coefs": coefs, "racines": racines}
+
+    def colorer_boutons_mode(self):
+        for mode, b in self.boutons_mode.items():
+            actif = mode == self.mode
+            b.color = ACCENT if actif else CHAMP
+            b.hovercolor = ACCENT_SURVOL if actif else CHAMP_SURVOL
+            b.ax.set_facecolor(b.color)
+            b.label.set_color(FOND if actif else TEXTE)
+            b.label.set_fontweight("bold" if actif else "normal")
+
+    def changer_mode(self, mode, texte=None):
+        """Passe le champ en saisie de p(z) ou de racines, en convertissant ce qui est écrit."""
+        if mode == self.mode and texte is None:
+            return
+        if texte is None:
+            try:
+                saisi = self.lire_polynome_saisi()
+            except ValueError as e:
+                if self.champs["polynome"].text.strip():
+                    self.statut(f"{e}\n(corrige le champ avant de changer de mode)", ERREUR)
+                    return
+                saisi = {"polynome": "", "racines_texte": ""}
+            texte = saisi["racines_texte"] if mode == "racines" else saisi["polynome"]
+        self.mode = mode
+        self.texte_libelle_poly.set_text(LIBELLES_MODE[mode])
+        self.colorer_boutons_mode()
+        self.ecrire("polynome", texte)
+        self.statut("Saisie des racines : p(z) = produit des (z - racine)" if mode == "racines"
+                    else "Saisie du polynôme p(z)", TEXTE_DOUX)
+
     def lire_champs(self):
         """Lit et vérifie les champs ; lève ValueError avec un message clair."""
-        p = {"polynome": " ".join(self.champs["polynome"].text.split())}
-        p["coefs"], p["racines"] = lire_polynome(p["polynome"])   # lève ValueError si illisible
+        p = self.lire_polynome_saisi()
         for cle, libelle, type_ in CHAMPS:
             texte = self.champs[cle].text.strip().replace(",", ".")
             try:
@@ -603,8 +817,11 @@ class Application:
 
     def statut(self, texte, couleur=TEXTE_DOUX):
         # Retour à la ligne pour rester dans le panneau
-        lignes = [textwrap.fill(l, 46) for l in texte.splitlines()]
-        self.texte_statut.set_text("\n".join(lignes))
+        texte = "\n".join(textwrap.fill(l, 46) for l in texte.splitlines())
+        self.texte_statut.set_text(texte)
+        # Un long message prend la place de l'aide, qui revient au message suivant
+        if hasattr(self, "texte_aide"):
+            self.texte_aide.set_visible(texte.count("\n") < 2)
         self.texte_statut.set_color(couleur)
         self.fig.canvas.draw_idle()
 
@@ -653,11 +870,13 @@ class Application:
         self.statut(f"Terminé en {duree:.2f} s   ·   {len(p['racines'])} racine(s)", SUCCES)
 
     def exemple_suivant(self, _=None):
-        """Met le polynôme d'exemple suivant dans le champ (sans lancer le calcul)."""
-        self.num_exemple = (self.num_exemple + 1) % len(EXEMPLES)
-        if EXEMPLES[self.num_exemple] == self.champs["polynome"].text.strip():
-            self.num_exemple = (self.num_exemple + 1) % len(EXEMPLES)
-        self.ecrire("polynome", EXEMPLES[self.num_exemple])
+        """Met l'exemple suivant (polynôme ou racines, selon le mode) dans le champ, sans calculer."""
+        liste = EXEMPLES[self.mode]
+        n = (self.num_exemple[self.mode] + 1) % len(liste)
+        if liste[n] == self.champs["polynome"].text.strip():
+            n = (n + 1) % len(liste)
+        self.num_exemple[self.mode] = n
+        self.ecrire("polynome", liste[n])
         self.statut("Exemple choisi : clique sur Calculer", TEXTE_DOUX)
 
     def recalculer_vue(self, _=None):
@@ -684,7 +903,8 @@ class Application:
             self.statut(f"Hauteur ajustée à {hauteur} px", TEXTE_DOUX)
 
     def valeurs_defaut(self, _=None):
-        self.remplir(DEFAUTS)
+        self.remplir({k: v for k, v in DEFAUTS.items() if k not in ("mode", "polynome", "racines_texte")})
+        self.changer_mode("polynome", texte=DEFAUTS["polynome"])
         self.statut("Valeurs par défaut remises (clique sur Calculer)", TEXTE_DOUX)
 
     def enregistrer(self, _=None):
@@ -721,7 +941,7 @@ class Application:
         if self.legende is not None:
             self.legende.remove()
         self.legende = creer_legende(self.fig, indices, 0.345, 0.04, self.racines)
-        self.texte_polynome.set_text(f"p(z) = {self.p.get('polynome', DEFAUTS['polynome'])}")
+        self.texte_polynome.set_text(titre_polynome(self.p))
         self.texte_sous_titre.set_text(sous_titre(self.p))
         self.navigation.reinitialiser()
         self.fig.canvas.draw_idle()
@@ -783,7 +1003,7 @@ def preparer(args):
         if args.iterations is not None:
             p["iterations"] = args.iterations
         if args.polynome:
-            p["polynome"] = args.polynome
+            p["mode"], p["polynome"] = "polynome", args.polynome
         if existe:
             indices = lire_resultats(args.fichier)
     elif memo and existe and abs(os.path.getmtime(args.fichier) - memo.get("fichier_date", -1)) < 1e-3:
@@ -805,7 +1025,8 @@ def main():
         print(f"Image enregistree : {args.enregistrer}")
         return
 
-    Application(p, indices, trouver_executable(args.exe))
+    app = Application(p, indices, trouver_executable(args.exe))
+    app.agrandir_au_lancement()
     plt.show()
 
 
