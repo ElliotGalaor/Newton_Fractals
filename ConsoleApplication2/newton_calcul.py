@@ -268,24 +268,37 @@ def texte_complexe(z, chiffres=3):
     return f"{re_:.{chiffres}g}{'-' if im_ < 0 else '+'}{im_txt}i"
 
 
-def charger_parametres():
+def charger_parametres(fichier=None):
     try:
-        with open(FICHIER_PARAMETRES) as f:
+        with open(fichier or FICHIER_PARAMETRES) as f:
             return json.load(f)
     except (OSError, ValueError):
         return None
 
 
-def sauvegarder_parametres(p, fichier_resultat):
+def sauvegarder_parametres(p, fichier_resultat, fichier=None):
     """Mémorise les paramètres du dernier calcul, et quel fichier de résultat leur correspond."""
     try:
         memo = {k: v for k, v in p.items() if k not in ("coefs", "racines")}
         memo.update(fichier=os.path.basename(fichier_resultat),
                     fichier_date=os.path.getmtime(fichier_resultat))
-        with open(FICHIER_PARAMETRES, "w") as f:
+        with open(fichier or FICHIER_PARAMETRES, "w") as f:
             json.dump(memo, f, indent=2)
     except OSError:
         pass
+
+
+def resultat_memorise(memo, lire):
+    """Relit le résultat du dernier calcul mémorisé, s'il n'a pas changé depuis ; sinon None."""
+    if not memo or not memo.get("fichier"):
+        return None
+    chemin = os.path.join(DOSSIER, memo["fichier"])
+    if not os.path.isfile(chemin) or abs(os.path.getmtime(chemin) - memo.get("fichier_date", -1)) >= 1e-3:
+        return None
+    try:
+        return lire(chemin)
+    except (OSError, ValueError):
+        return None
 
 
 def arguments_calcul(p, fichier_binaire):
@@ -302,7 +315,16 @@ def arguments_calcul(p, fichier_binaire):
 
 
 def verifier_parametres(p):
-    """Vérifie les valeurs numériques ; lève ValueError avec un message clair."""
+    """Vérifie les valeurs numériques (fractale de Newton) ; lève ValueError avec un message clair."""
+    verifier_fenetre(p)
+    if p["eps"] <= 0:
+        raise ValueError("La précision doit être positive")
+    if not 1 <= p["iterations"] <= 1_000_000:
+        raise ValueError("Itérations : entre 1 et 1 000 000")
+
+
+def verifier_fenetre(p):
+    """Vérifie la taille de l'image et la zone du plan complexe (communes à toutes les fractales)."""
     if not (1 <= p["largeur"] <= 20000 and 1 <= p["hauteur"] <= 20000):
         raise ValueError("La taille doit être entre 1 et 20000 pixels")
     if p["largeur"] * p["hauteur"] > 50_000_000:
@@ -312,10 +334,6 @@ def verifier_parametres(p):
     if ecart_trop_petit(p["min_x"], p["max_x"]) or ecart_trop_petit(p["min_y"], p["max_y"]):
         raise ValueError("Zoom trop profond : la précision des nombres (double, ~16 chiffres) "
                          "ne permet plus de distinguer les pixels")
-    if p["eps"] <= 0:
-        raise ValueError("La précision doit être positive")
-    if not 1 <= p["iterations"] <= 1_000_000:
-        raise ValueError("Itérations : entre 1 et 1 000 000")
 
 
 def trouver_executable(chemin=None):
@@ -380,14 +398,9 @@ def preparer(args):
             p["mode"], p["polynome"] = "polynome", args.polynome
         if os.path.isfile(args.fichier):
             indices = lire_fichier_resultat(args.fichier)
-    elif memo and memo.get("fichier"):
+    else:
         # Dernier calcul de l'interface, si son fichier n'a pas changé depuis
-        chemin = os.path.join(DOSSIER, memo["fichier"])
-        if os.path.isfile(chemin) and abs(os.path.getmtime(chemin) - memo.get("fichier_date", -1)) < 1e-3:
-            try:
-                indices = lire_fichier_resultat(chemin)
-            except (OSError, ValueError):
-                indices = None
+        indices = resultat_memorise(memo, lire_fichier_resultat)
     if indices is not None:
         p["hauteur"], p["largeur"] = indices.shape
     return p, indices
@@ -416,7 +429,10 @@ def intervalle_sci(a, b, precision=1e-6):
     for n in range(4, 18):
         ta, tb = nombre_sci(a, n), nombre_sci(b, n)
         ra, rb = float(ta), float(tb)
-        if rb > ra and abs((rb - ra) - (b - a)) <= precision * (b - a):
+        ecart = b - a
+        # écart juste ET bornes à leur place (sinon la vue glisse à chaque recalcul)
+        if rb > ra and abs((rb - ra) - ecart) <= precision * ecart \
+                and abs(ra - a) <= precision * ecart and abs(rb - b) <= precision * ecart:
             return ta, tb
     return nombre_sci(a, 17), nombre_sci(b, 17)
 
@@ -488,10 +504,12 @@ def titre_polynome(p, longueur_max=95):
 
 
 # --- Champs du panneau --------------------------------------------------------
-CHAMPS = [  # (clé, libellé, type) des champs numériques
+CHAMPS_FENETRE = [  # (clé, libellé, type) : champs communs à toutes les fractales
     ("largeur", "Largeur (px)", int), ("hauteur", "Hauteur (px)", int),
     ("min_x", "Re min", float), ("max_x", "Re max", float),
     ("min_y", "Im min", float), ("max_y", "Im max", float),
+]
+CHAMPS = CHAMPS_FENETRE + [  # champs numériques de la fractale de Newton
     ("eps", "Précision (eps)", float), ("iterations", "Itérations max", int),
 ]
 
@@ -531,10 +549,10 @@ def lire_saisie_polynome(texte, mode):
             "coefs": coefs, "racines": racines}
 
 
-def lire_nombres(textes):
+def lire_nombres(textes, champs=None):
     """{clé: texte} des champs numériques → {clé: valeur} ; lève ValueError si un champ est invalide."""
     p = {}
-    for cle, libelle, type_ in CHAMPS:
+    for cle, libelle, type_ in champs or CHAMPS:
         texte = textes[cle].strip().replace(",", ".")
         try:
             p[cle] = type_(float(texte)) if type_ is int else float(texte)
@@ -552,3 +570,19 @@ def etiquette_axe(v, ecart):
         texte = f"{v:.{decimales}f}"
         return "0" if float(texte) == 0 else texte
     return coordonnee(v, ecart)
+
+
+def calcul_apercu(largeur=320, hauteur=200, iterations=40):
+    """Petit calcul numpy de la fractale de z^5 - 1, sans le moteur C++ (aperçu de la page d'accueil).
+    Renvoie les indices de racine, une ligne par y (même convention que lire_resultats)."""
+    x = np.linspace(-1.6, 1.6, largeur)
+    y = np.linspace(-1.6 * hauteur / largeur, 1.6 * hauteur / largeur, hauteur)
+    z = x[None, :] + 1j * y[:, None]
+    racines = np.exp(2j * np.pi * np.arange(5) / 5)
+    with np.errstate(all="ignore"):
+        for _ in range(iterations):
+            z = z - (z ** 5 - 1) / (5 * z ** 4)
+    distances = np.abs(z[..., None] - racines)
+    indices = distances.argmin(-1) + 1
+    indices[~(distances.min(-1) < 0.1)] = -1
+    return indices

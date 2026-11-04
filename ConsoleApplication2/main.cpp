@@ -138,10 +138,83 @@ struct Parametres {
     string fichier_binaire;                  // si non vide : sortie binaire dans ce fichier au lieu de results.txt
     vector<CNum> coefs = COEFS_DEFAUT;       // du plus haut degré au terme constant
     vector<CNum> racines = RACINES_DEFAUT;
+    bool mandelbrot = false;                 // ensemble de Mandelbrot au lieu de la fractale de Newton
 };
+
+// Ensemble de Mandelbrot : pour chaque point c, on itère z <- z² + c depuis z = 0.
+// Résultat par pixel : nombre d'itérations « lissé » avant que |z| dépasse le rayon
+// d'échappement (valeur réelle, pour des dégradés sans bandes), ou -1 si le point
+// n'a pas divergé après p.iterations itérations (il est alors considéré dans l'ensemble).
+static vector<float> calculer_mandelbrot(const Parametres& p) {
+    const int dim_x = p.dim_x, dim_y = p.dim_y;
+    const double incr_x = (p.max_x - p.min_x) / dim_x;
+    const double incr_y = (p.max_y - p.min_y) / dim_y;
+    const double rayon2 = 256.0 * 256.0;     // grand rayon d'échappement : lissage plus précis
+    const double log2 = log(2.0);
+    vector<float> res((size_t)dim_x * dim_y);
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < dim_x; i++) {
+        const double cx = p.min_x + i * incr_x;
+        for (int k = 0; k < dim_y; k++) {
+            const double cy = p.min_y + k * incr_y;
+            float& sortie = res[(size_t)i * dim_y + k];
+            // Points de la cardioïde principale et du disque de période 2 : dans l'ensemble, sans calcul
+            const double q = (cx - 0.25) * (cx - 0.25) + cy * cy;
+            if (q * (q + (cx - 0.25)) <= 0.25 * cy * cy || (cx + 1) * (cx + 1) + cy * cy <= 0.0625) {
+                sortie = -1.0f;
+                continue;
+            }
+            double x = 0, y = 0, x2 = 0, y2 = 0;
+            int n = 0;
+            while (n < p.iterations && x2 + y2 <= rayon2) {
+                y = 2 * x * y + cy;
+                x = x2 - y2 + cx;
+                x2 = x * x;
+                y2 = y * y;
+                n++;
+            }
+            if (n >= p.iterations && x2 + y2 <= rayon2) {
+                sortie = -1.0f;
+            }
+            else {
+                const double log_module = 0.5 * log(x2 + y2);
+                const double lisse = n + 1 - log(log_module / log2) / log2;
+                sortie = (float)(lisse > 0 ? lisse : 0);
+            }
+        }
+    }
+    return res;
+}
+
+// Format : dim_x et dim_y (int32 little-endian), puis un float32 par pixel, ligne par ligne selon x
+static bool write_binary_reels(const vector<float>& valeurs, int dim_x, int dim_y, const string& chemin) {
+    const int32_t dims[2] = { dim_x, dim_y };
+    ofstream f(chemin, ios::binary);
+    if (!f) return false;
+    f.write(reinterpret_cast<const char*>(dims), sizeof(dims));
+    f.write(reinterpret_cast<const char*>(valeurs.data()), (streamsize)(valeurs.size() * sizeof(float)));
+    return (bool)f;
+}
+
+static bool calculer_et_ecrire_mandelbrot(const Parametres& p) {
+    auto t0 = chrono::steady_clock::now();
+    vector<float> res = calculer_mandelbrot(p);
+    auto t1 = chrono::steady_clock::now();
+    if (!write_binary_reels(res, p.dim_x, p.dim_y, p.fichier_binaire)) {
+        cerr << "Ecriture impossible : " << p.fichier_binaire << endl;
+        return false;
+    }
+    auto t2 = chrono::steady_clock::now();
+    cout << "Calcul : " << chrono::duration<double>(t1 - t0).count() << " s, "
+         << "ecriture : " << chrono::duration<double>(t2 - t1).count() << " s" << endl;
+    return true;
+}
 
 // Calcule la fractale, écrit results.txt (ou le fichier binaire) et affiche les temps
 static bool calculer(const Parametres& p) {
+    if (p.mandelbrot) return calculer_et_ecrire_mandelbrot(p);
+
     coefs = p.coefs;
     zero_list = p.racines;
     // Seuil d'attribution : 0.1, réduit si des racines sont très proches l'une de l'autre
@@ -197,6 +270,9 @@ static void afficher_aide() {
             "                                      leur ordre donne les numeros 1..N de results.txt\n"
             "  --binaire FICHIER                   ecrit le resultat en binaire (en-tete dim_x, dim_y\n"
             "                                      en int32, puis un int8 par pixel) au lieu de results.txt\n"
+            "  --mandelbrot                        ensemble de Mandelbrot au lieu de la fractale de Newton\n"
+            "                                      (avec --binaire, obligatoire : un float32 par pixel = nombre\n"
+            "                                      d'iterations lisse avant divergence, -1 dans l'ensemble)\n"
             "Sans option : calcul par defaut puis ouverture du graphique.\n";
 }
 
@@ -239,6 +315,10 @@ static bool lire_arguments(int argc, char* argv[], Parametres& p, string& erreur
             p.fichier_binaire = argv[++a];
             continue;
         }
+        if (opt == "--mandelbrot") {
+            p.mandelbrot = true;
+            continue;
+        }
         if (opt == "--coefs" || opt == "--racines") {
             vector<CNum>& cible = (opt == "--coefs") ? p.coefs : p.racines;
             if (!lire_complexes(argc, argv, a, cible, erreur)) return false;
@@ -262,6 +342,7 @@ static bool lire_arguments(int argc, char* argv[], Parametres& p, string& erreur
     if (p.min_x >= p.max_x || p.min_y >= p.max_y) { erreur = "Il faut MIN < MAX pour les bornes"; return false; }
     if (p.eps <= 0) { erreur = "EPS doit etre positif"; return false; }
     if (p.iterations < 1) { erreur = "Il faut au moins 1 iteration"; return false; }
+    if (p.mandelbrot && p.fichier_binaire.empty()) { erreur = "--mandelbrot demande --binaire FICHIER"; return false; }
     if (coefs_lus != racines_lues) { erreur = "--coefs et --racines doivent etre donnes ensemble"; return false; }
     if (p.coefs.size() < 2 || p.coefs[0] == 0) { erreur = "Le polynome doit etre de degre 1 au moins"; return false; }
     return true;

@@ -16,3 +16,10 @@ Release/
 parametres.json
 fractale_*.png
 results.bin
+results_mandelbrot.bin
+parametres_mandelbrot.json
+__pycache__/
+graphes2d.json
+surfaces3d.json
+graphe_*.png
+surface_*.png
