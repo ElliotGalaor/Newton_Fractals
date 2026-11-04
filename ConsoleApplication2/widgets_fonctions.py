@@ -34,9 +34,10 @@ class LigneFonction(QtWidgets.QWidget):
     modifiee = QtCore.Signal()
     supprimee = QtCore.Signal(object)
 
-    def __init__(self, texte, couleur, visible, variables):
+    def __init__(self, texte, couleur, visible, variables, equations=False):
         super().__init__()
         self.variables = variables
+        self.equations = equations      # équations en x et y permises (plan 2D)
         self.couleur = couleur
         self.expression = None
         v = QtWidgets.QVBoxLayout(self)
@@ -84,7 +85,7 @@ class LigneFonction(QtWidgets.QWidget):
 
     def lire(self):
         try:
-            self.expression = ex.lire(self.champ.text(), self.variables)
+            self.expression = ex.lire(self.champ.text(), self.variables, self.equations)
             self.erreur.hide()
             self.champ.setStyleSheet("")
         except ValueError as e:
@@ -106,9 +107,10 @@ class ListeFonctions(QtWidgets.QWidget):
     """Liste de fonctions ; émet « changee » à chaque modification (frappe, couleur, ajout…)."""
     changee = QtCore.Signal()
 
-    def __init__(self, variables, exemples, etats):
+    def __init__(self, variables, exemples, etats, equations=False):
         super().__init__()
         self.variables = variables
+        self.equations = equations
         self.exemples = exemples
         self.num_exemple = -1
         self.lignes = []
@@ -135,7 +137,7 @@ class ListeFonctions(QtWidgets.QWidget):
             utilisees = {l.couleur for l in self.lignes}
             couleur = next((c for c in COULEURS_COURBES if c not in utilisees),
                            COULEURS_COURBES[len(self.lignes) % len(COULEURS_COURBES)])
-        ligne = LigneFonction(texte, couleur, visible, self.variables)
+        ligne = LigneFonction(texte, couleur, visible, self.variables, self.equations)
         ligne.modifiee.connect(self.changee.emit)
         ligne.supprimee.connect(self.supprimer)
         self.lignes.append(ligne)
@@ -167,14 +169,15 @@ class ListeFonctions(QtWidgets.QWidget):
             ligne.deleteLater()
 
     def fonctions(self):
-        """[(expression, couleur, visible, nom affiché)] des fonctions lisibles, noms automatiques f, g, h…"""
+        """[(expression, couleur, visible, nom affiché)] des fonctions lisibles, noms automatiques f, g, h…
+        (les équations, comme x² + y² = 4, n'ont pas de nom : leur nom affiché est None)"""
         pris = {l.expression.nom for l in self.lignes if l.expression and l.expression.nom}
         libres = [n for n in NOMS_AUTO if n not in pris] + list(string.ascii_uppercase)
         resultat = []
         for l in self.lignes:
             if l.expression is None:
                 continue
-            nom = l.expression.nom or libres.pop(0)
+            nom = None if l.expression.implicite else (l.expression.nom or libres.pop(0))
             resultat.append((l.expression, l.couleur, l.case.isChecked(), nom))
         return resultat
 

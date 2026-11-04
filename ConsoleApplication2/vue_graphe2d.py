@@ -61,7 +61,8 @@ class VueGraphe2D(QtWidgets.QWidget):
         gauche = QtWidgets.QVBoxLayout()
         gauche.setSpacing(4)
         gauche.addLayout(barre_titre(self.NOM, self.principale))
-        gauche.addWidget(etiquette("Courbes y = f(x)   ·   écris une fonction à droite, elle s'affiche à la frappe", "ligne1"))
+        gauche.addWidget(etiquette("Courbes y = f(x) et équations en x et y   ·   écris-les à droite, elles s'affichent à la frappe",
+                                   "ligne1"))
         self.label_infos = etiquette("", "infos")
         gauche.addWidget(self.label_infos)
         gauche.addSpacing(4)
@@ -104,9 +105,9 @@ class VueGraphe2D(QtWidgets.QWidget):
 
         panneau, v = zone_defilante()
         v.addWidget(etiquette("Fonctions", "entete"))
-        v.addWidget(etiquette("Exemples : sin(x),  x^2 - 3,  2x exp(-x),  f(x) = a sin(b x),  1/x,  sqrt(4 - x²)",
-                              "libelle"))
-        self.liste = ListeFonctions(("x",), ex.EXEMPLES_2D, etat.get("fonctions", FONCTIONS_DEPART))
+        v.addWidget(etiquette("Fonctions : sin(x),  x^2 - 3,  f(x) = a sin(b x),  1/x\n"
+                              "Équations : x² + y² = 4 (cercle),  x²/9 + y²/4 = 1,  y² = x³ - x", "libelle"))
+        self.liste = ListeFonctions(("x",), ex.EXEMPLES_2D, etat.get("fonctions", FONCTIONS_DEPART), equations=True)
         self.liste.changee.connect(self.fonctions_changees)
         v.addWidget(self.liste)
 
@@ -141,7 +142,8 @@ class VueGraphe2D(QtWidgets.QWidget):
         v.addWidget(self.label_statut)
         v.addStretch(1)
         v.addWidget(etiquette("Molette : zoom   ·   clic-glisser : déplacer\n"
-                              "Variables : x · paramètres : toute autre lettre (a, b, k…)\n"
+                              "Fonction : variable x   ·   équation (avec =) : x et y\n"
+                              "Paramètres : toute autre lettre (a, b, k…)\n"
                               "Fonctions : sin cos tan exp ln log sqrt abs floor…   ·   π, e", "aide"))
         disposition.addWidget(panneau)
 
@@ -161,7 +163,8 @@ class VueGraphe2D(QtWidgets.QWidget):
             courbe.setPen(stylo(couleur, 2.5))
             self.vb.addItem(courbe, ignoreBounds=True)
             # (élément jamais tracé : il ne sert qu'à dessiner l'échantillon de la légende)
-            self.legende.addItem(pg.PlotDataItem(pen=pg.mkPen(couleur, width=2.5)), f"{nom}(x) = {expression.corps}")
+            libelle = expression.corps if expression.implicite else f"{nom}(x) = {expression.corps}"
+            self.legende.addItem(pg.PlotDataItem(pen=pg.mkPen(couleur, width=2.5)), libelle)
             self.courbes.append((courbe, expression, nom, couleur))
         self.redessiner()
 
@@ -175,6 +178,10 @@ class VueGraphe2D(QtWidgets.QWidget):
         parametres = self.curseurs.valeurs_actuelles()
         n = int(min(4000, max(800, self.vb.width() * 2)))
         for courbe, expression, *_ in self.courbes:
+            if expression.implicite:
+                courbe.setPath(self.chemin_implicite(expression, x0 - marge, x1 + marge,
+                                                     y0 - marge, y1 + marge, parametres))
+                continue
             x, y = ex.echantillonner_courbe(expression, x0 - marge, x1 + marge, y1 - y0, parametres, n)
             # Les valeurs très loin de la vue sont ramenées à son bord (Qt dessine mal les grands nombres)
             y = np.clip(y, y0 - 10 * (y1 - y0), y1 + 10 * (y1 - y0))
@@ -185,6 +192,15 @@ class VueGraphe2D(QtWidgets.QWidget):
         self.label_infos.setText(f"x ∈ [{lisible(x0, rx)}, {lisible(x1, rx)}]   ·   y ∈ [{lisible(y0, ry)}, "
                                  f"{lisible(y1, ry)}]   ·   {len(self.courbes)} courbe(s)")
         self.minuteur_sauvegarde.start()
+
+    def chemin_implicite(self, expression, x0, x1, y0, y1, parametres):
+        """Tracé de l'équation F(x, y) = 0 : une grille d'environ un point tous les 2,5 pixels."""
+        nx = int(min(900, max(120, self.vb.width() / 2.5)))
+        ny = int(min(900, max(120, self.vb.height() / 2.5)))
+        segments = ex.segments_implicites(expression, x0, x1, y0, y1, nx, ny, parametres)
+        if not len(segments):
+            return QtGui.QPainterPath()
+        return pg.functions.arrayToQPath(segments[:, :, 0].ravel(), segments[:, :, 1].ravel(), connect="pairs")
 
     def souris_bougee(self, pos):
         """Coordonnées sous la souris ; un point suit la courbe la plus proche."""
@@ -199,6 +215,8 @@ class VueGraphe2D(QtWidgets.QWidget):
         meilleur, distance_min = None, None
         valeurs = []
         for courbe, expression, nom, couleur in self.courbes:
+            if expression.implicite:
+                continue   # (une équation ne donne pas une valeur de y pour chaque x)
             yv = float(expression.evaluer(dict(parametres, x=np.array([p.x()])))[0])
             if np.isfinite(yv):
                 valeurs.append(f"{nom}({lisible(p.x(), px)}) = {lisible(yv, py / 10)}")
@@ -223,21 +241,52 @@ class VueGraphe2D(QtWidgets.QWidget):
         self.vb.setRange(xRange=(x0, x1), yRange=(y0, y1), padding=0)
 
     def ajuster(self):
-        """Cadre les courbes visibles dans la largeur actuelle (sans les valeurs extrêmes)."""
-        (x0, x1), _ = self.vb.viewRange()
+        """Cadre les courbes : en hauteur pour les fonctions (sans les valeurs extrêmes), et
+        entièrement pour les équations (un cercle reste rond : repère orthonormé conservé)."""
+        (x0, x1), (y0, y1) = self.vb.viewRange()
         parametres = self.curseurs.valeurs_actuelles()
-        ys = [expression.evaluer(dict(parametres, x=np.linspace(x0, x1, 2000))) for _, expression, *_ in self.courbes]
+        fonctions = [e for _, e, *_ in self.courbes if not e.implicite]
+        equations = [e for _, e, *_ in self.courbes if e.implicite]
+        ys = [e.evaluer(dict(parametres, x=np.linspace(x0, x1, 2000))) for e in fonctions]
         ys = np.concatenate([y[np.isfinite(y)] for y in ys]) if ys else np.array([])
-        if ys.size == 0:
+        # Équations : on cherche leur tracé sur une zone 3 fois plus grande que la vue.
+        # Une courbe fermée (cercle, ellipse) est cadrée entièrement ; une courbe qui touche
+        # le bord de cette zone est infinie (droite, hyperbole…) : seule sa partie déjà
+        # visible compte, sinon elle imposerait un cadrage démesuré.
+        lx, ly = x1 - x0, y1 - y0
+        zone = (x0 - lx, x1 + lx, y0 - ly, y1 + ly)
+        bord_x, bord_y = 3 * lx / 359 * 1.5, 3 * ly / 359 * 1.5
+        points = []
+        for e in equations:
+            p = ex.segments_implicites(e, *zone, 360, 360, parametres).reshape(-1, 2)
+            infinie = len(p) and ((p[:, 0] <= zone[0] + bord_x) | (p[:, 0] >= zone[1] - bord_x)
+                                  | (p[:, 1] <= zone[2] + bord_y) | (p[:, 1] >= zone[3] - bord_y)).any()
+            if infinie:
+                p = p[(p[:, 0] >= x0) & (p[:, 0] <= x1) & (p[:, 1] >= y0) & (p[:, 1] <= y1)]
+            points.append(p)
+        points = np.concatenate(points) if points else np.zeros((0, 2))
+        if ys.size == 0 and len(points) == 0:
             self.statut("Aucune courbe à cadrer.")
             return
-        bas, haut = np.percentile(ys, [2, 98])
+        if len(points):
+            (pg_x, pb_y), (pd_x, ph_y) = points.min(axis=0), points.max(axis=0)   # (x, y) min et max
+        if ys.size:
+            bas, haut = np.percentile(ys, [2, 98])
+            gauche, droite = x0, x1
+            if len(points):
+                bas, haut = min(bas, pb_y), max(haut, ph_y)
+            self.case_orthonorme.setChecked(False)   # sinon la hauteur imposerait la largeur
+            message = "Vue ajustée aux courbes (repère orthonormé désactivé)."
+        else:
+            gauche, droite, bas, haut = pg_x, pd_x, pb_y, ph_y
+            message = "Vue ajustée aux équations."
         if haut - bas < 1e-9:
             bas, haut = bas - 1, haut + 1
-        marge = (haut - bas) * 0.1
-        self.case_orthonorme.setChecked(False)   # sinon la hauteur imposerait la largeur
-        self.vb.setRange(xRange=(x0, x1), yRange=(bas - marge, haut + marge), padding=0)
-        self.statut("Vue ajustée aux courbes (repère orthonormé désactivé).")
+        if droite - gauche < 1e-9:
+            gauche, droite = gauche - 1, droite + 1
+        mx, my = (droite - gauche) * 0.1, (haut - bas) * 0.1
+        self.vb.setRange(xRange=(gauche - mx, droite + mx), yRange=(bas - my, haut + my), padding=0)
+        self.statut(message)
 
     def exporter(self):
         defaut = os.path.join(nc.DOSSIER, time.strftime("graphe_%Y%m%d_%H%M%S.png"))

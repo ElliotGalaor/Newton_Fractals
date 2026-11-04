@@ -109,6 +109,7 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
         self.accueil = PageAccueil(self.ouvrir)
         self.pile.addWidget(self.accueil)
         self.setCentralWidget(self.pile)
+        self.preparer_opengl()
 
         menu = self.menuBar().addMenu("&Visualisations")
         for texte, raccourci, action in (("Accueil", "Ctrl+0", self.aller_accueil),
@@ -128,6 +129,18 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
         quitter.triggered.connect(self.close)
         menu.addAction(quitter)
         self.aller_accueil()
+
+    def preparer_opengl(self):
+        """Widget OpenGL invisible (1 pixel), créé avant le premier affichage de la fenêtre.
+        Sans lui, la première ouverture de la page 3D oblige Qt à recréer la fenêtre pour lui
+        donner une surface OpenGL : elle se ferme puis se rouvre."""
+        try:
+            from PySide6.QtOpenGLWidgets import QOpenGLWidget
+        except ImportError:
+            return   # sans OpenGL, la page 3D affichera de toute façon un message
+        self.opengl_invisible = QOpenGLWidget(self)
+        self.opengl_invisible.setFixedSize(1, 1)
+        self.opengl_invisible.lower()   # sous la page affichée
 
     def creer_vue(self, nom):
         if nom == "newton":

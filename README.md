@@ -11,7 +11,8 @@ page that presents the available visualizations:
 - **Mandelbrot set** — the points c for which the sequence z ← z² + c, starting from
   z = 0, stays bounded. Its boundary shows spirals, "seahorses" and miniature copies of
   the whole set at every scale.
-- **2D graphs** — curves y = f(x) in the plane, in the spirit of GeoGebra: type a formula,
+- **2D graphs** — curves y = f(x) and equations in x and y (circles, ellipses…) in the
+  plane, in the spirit of GeoGebra: type a formula,
   the curve appears as you type.
 - **3D surfaces** — surfaces z = f(x, y) in space, lit and coloured, rotated and zoomed
   with the mouse.
@@ -56,6 +57,9 @@ page that presents the available visualizations:
 
 **2D graphs**
 
+- **Equations in x and y** (implicit curves) such as `x² + y² = 4`, `x²/9 + y²/4 = 1`,
+  `y² = x³ - x` or `x = 2`, traced with the marching squares algorithm on the visible
+  area (sharp at any zoom level, a few milliseconds per curve).
 - Several functions at once, each with its colour, visibility toggle and legend entry;
   syntax errors are shown under the formula as you type.
 - Curves resampled on every zoom or pan, so they stay sharp; vertical asymptotes
@@ -174,6 +178,7 @@ Type one function per line in the *Fonctions* / *Surfaces* panel; it is drawn as
 | Input | Meaning |
 |---|---|
 | `sin(x)`, `y = x^2 - 3`, `f(x) = 2x exp(-x)` | 2D: a function of `x` (a name like `f(x) =` is optional) |
+| `x^2 + y^2 = 4`, `y^2 = x^3 - x`, `sin(x) = cos(y)`, `x = 2` | 2D: an equation in `x` and `y` — any `=` that does not simply define `y` or `f(x)` |
 | `sin(x) cos(y)`, `z = x^2 - y^2`, `g(x, y) = …` | 3D: a function of `x` and `y` |
 | `x^2`, `x**2`, `x²` | powers |
 | `2x`, `x sin(x)`, `(x-1)(x+1)`, `2pi x` | implicit multiplication |
@@ -257,8 +262,11 @@ ConsoleApplication2/
   when roots are close to each other).
 - Mandelbrot: very deep zooms need many iterations; the automatic setting goes up to
   about 5 500 iterations at 10⁻¹².
-- 2D / 3D: only explicit functions y = f(x) and z = f(x, y) (no implicit curves,
-  parametric curves or points yet); surfaces are clipped to ±"Couper z à" to keep the
+- 2D: explicit functions y = f(x) and equations in x and y (no parametric curves or
+  points yet). An equation is drawn where its two sides are equal on a grid of about one
+  point every 2.5 pixels: details smaller than that, or curves where the two sides touch
+  without crossing (e.g. `(x² + y² - 4)² = 0`), may be missed.
+- 3D: explicit surfaces z = f(x, y) only; they are clipped to ±"Couper z à" to keep the
   view readable.
 - Inside the plotting area, only plain Qt graphics items are used (curves, axes, fractal
   images): pyqtgraph's own plot items do not render with the PySide6 6.9 build of MSYS2.

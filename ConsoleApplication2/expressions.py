@@ -33,22 +33,41 @@ _JETON = re.compile(r"\s*(?:(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)"
 _REMPLACEMENTS = {"π": "pi", "²": "^2", "³": "^3", "×": "*", "·": "*", "−": "-", "÷": "/"}
 _PREFIXE = re.compile(r"^\s*(?:([A-Za-z]\w*)\s*\(\s*[A-Za-z\s,]*\)|([yz]))\s*=\s*")
 
-EXEMPLES_2D = ["sin(x)", "x^2 - 3", "exp(-x^2)", "a sin(b x)", "1/x", "sqrt(4 - x^2)",
-               "ln(x)", "abs(x) - 2", "x^3 - 3x", "tan(x)", "sin(x)/x", "floor(x)"]
+EXEMPLES_2D = ["sin(x)", "x^2 + y^2 = 4", "x^2 - 3", "x^2/9 + y^2/4 = 1", "exp(-x^2)", "y^2 = x^3 - x",
+               "a sin(b x)", "(x^2 + y^2)^2 = 8 x y", "1/x", "sin(x) = cos(y)", "sqrt(4 - x^2)",
+               "x^2 - y^2 = 1", "ln(x)", "x = 2", "tan(x)", "sin(x)/x"]
 EXEMPLES_3D = ["sin(x) cos(y)", "x^2 - y^2", "exp(-(x^2 + y^2))", "a sin(sqrt(x^2 + y^2))",
                "cos(x y)", "x y / (1 + x^2 + y^2)", "sin(x) + cos(y)", "abs(x) + abs(y)"]
 
 
 class Expression:
     """Fonction réelle lue depuis un texte. evaluer() prend un dictionnaire de valeurs
-    (variables et paramètres, tableaux numpy ou nombres) et renvoie un tableau."""
+    (variables et paramètres, tableaux numpy ou nombres) et renvoie un tableau.
 
-    def __init__(self, texte, variables):
+    Avec equations=True (plan 2D), un texte de la forme « gauche = droite » qui ne définit
+    pas simplement y ou f(x) est une équation en x et y (courbe implicite, ex. un cercle
+    x² + y² = 4) : implicite vaut alors True et evaluer() renvoie gauche - droite, dont
+    la courbe est l'ensemble des points où cette valeur s'annule."""
+
+    def __init__(self, texte, variables, equations=False):
         self.texte = texte
-        self.variables = tuple(variables)
         self.nom, corps = _separer_prefixe(texte)
-        self.corps = corps.strip()
-        self.arbre, self.parametres = _analyser(self.corps, self.variables)
+        self.corps = " ".join(corps.split())
+        self.implicite = "=" in corps
+        if self.implicite:
+            if not equations:
+                raise ValueError("un seul signe = est permis, au début (ex. z = …)")
+            if corps.count("=") > 1:
+                raise ValueError("une équation ne contient qu'un seul signe =")
+            gauche, droite = corps.split("=")
+            if not gauche.strip() or not droite.strip():
+                raise ValueError("il manque un membre de l'équation (ex. x² + y² = 4)")
+            self.nom = None
+            self.variables = ("x", "y")
+            self.arbre, self.parametres = _analyser(f"({gauche}) - ({droite})", self.variables)
+        else:
+            self.variables = tuple(variables)
+            self.arbre, self.parametres = _analyser(self.corps, self.variables, equations)
 
     def evaluer(self, valeurs):
         with np.errstate(all="ignore"):
@@ -65,7 +84,7 @@ def _separer_prefixe(texte):
     for a, b in _REMPLACEMENTS.items():
         t = t.replace(a, b)
     m = _PREFIXE.match(t)
-    if not m:
+    if not m or m.group(1) in FONCTIONS:   # « sin(x) = cos(y) » est une équation, pas une définition
         return None, t
     return m.group(1), t[m.end():]
 
@@ -107,7 +126,7 @@ def _jetons(texte):
     return jetons
 
 
-def _analyser(texte, variables):
+def _analyser(texte, variables, equations=False):
     if not texte.strip():
         raise ValueError("rien n'est écrit")
     jetons = _jetons(texte)
@@ -126,7 +145,12 @@ def _analyser(texte, variables):
     except SyntaxError:
         raise ValueError("expression mal écrite")
     parametres = set()
-    _verifier(arbre, variables, parametres)
+    try:
+        _verifier(arbre, variables, parametres)
+    except ValueError as e:
+        if equations and str(e).startswith("y n'est pas"):
+            raise ValueError("y est permis dans une équation : écris-la avec =, ex. x² + y² = 4")
+        raise
     return arbre, sorted(parametres)
 
 
@@ -185,9 +209,71 @@ def _evaluer(noeud, valeurs):
     return np.power(np.asarray(g, dtype=float), d)
 
 
-def lire(texte, variables):
-    """Raccourci : Expression(texte, variables), ValueError avec un message clair si illisible."""
-    return Expression(texte, variables)
+def lire(texte, variables, equations=False):
+    """Raccourci : Expression(texte, variables, equations), ValueError avec un message clair si illisible."""
+    return Expression(texte, variables, equations)
+
+
+def segments_implicites(expression, x0, x1, y0, y1, nx, ny, valeurs_parametres):
+    """Courbe F(x, y) = 0 sur le rectangle donné, par la méthode des « carrés marchants » :
+    on évalue F sur une grille nx × ny ; dans chaque case où F change de signe entre deux
+    coins, la courbe coupe les côtés concernés, au point obtenu par interpolation linéaire.
+    Renvoie un tableau (nombre de segments, 2 extrémités, 2 coordonnées)."""
+    xs = np.linspace(x0, x1, nx)
+    ys = np.linspace(y0, y1, ny)
+    X, Y = np.meshgrid(xs, ys)                                  # F[j, i] au point (xs[i], ys[j])
+    F = expression.evaluer(dict(valeurs_parametres, x=X, y=Y))
+    positif = F > 0
+    # Cases où F change de signe entre deux coins (en général environ 1 % des cases) :
+    # tout le reste du calcul ne porte que sur elles
+    pa, pb, pc, pd = positif[:-1, :-1], positif[:-1, 1:], positif[1:, 1:], positif[1:, :-1]
+    j, i = np.nonzero((pa != pb) | (pb != pc) | (pc != pd))
+    if not j.size:
+        return np.zeros((0, 2, 2))
+    a, b, c, d = F[j, i], F[j, i + 1], F[j + 1, i + 1], F[j + 1, i]   # bas-g., bas-d., haut-d., haut-g.
+    pa, pb, pc, pd = a > 0, b > 0, c > 0, d > 0
+    C = expression.evaluer(dict(valeurs_parametres, x=(xs[i] + xs[i + 1]) / 2, y=(ys[j] + ys[j + 1]) / 2))
+    # Une case qui « traverse » un pôle (ex. 1/x) change de signe sans contenir la courbe :
+    # la valeur au centre y est alors bien plus grande que celles des coins.
+    with np.errstate(all="ignore"):
+        grand = np.max(np.abs(np.stack([a, b, c, d])), axis=0)
+    valides = np.isfinite(a) & np.isfinite(b) & np.isfinite(c) & np.isfinite(d) & np.isfinite(C)
+    valides &= np.abs(np.nan_to_num(C)) <= 2 * np.nan_to_num(grand) + 1e-300
+    croise = np.stack([pa != pb, pb != pc, pd != pc, pa != pd]) & valides   # côtés : bas, droit, haut, gauche
+
+    xg, xd, yb, yh = xs[i], xs[i + 1], ys[j], ys[j + 1]
+
+    def interp(v0, v1, p0, p1):
+        with np.errstate(all="ignore"):
+            t = np.clip(v0 / (v0 - v1), 0, 1)
+        return p0 + np.nan_to_num(t) * (p1 - p0)
+
+    points = np.stack([
+        np.stack([interp(a, b, xg, xd), yb], axis=-1),   # bas
+        np.stack([xd, interp(b, c, yb, yh)], axis=-1),   # droit
+        np.stack([interp(d, c, xg, xd), yh], axis=-1),   # haut
+        np.stack([xg, interp(a, d, yb, yh)], axis=-1),   # gauche
+    ])                                                   # (4, cases, 2)
+    nombre = croise.sum(axis=0)
+    segments = []
+
+    # Cases traversées une fois : un segment entre les deux côtés coupés
+    k = np.nonzero(nombre == 2)[0]
+    if k.size:
+        cotes = np.argsort(~croise[:, k], axis=0, kind="stable")[:2]       # indices des 2 côtés coupés
+        segments.append(np.stack([points[cotes[0], k], points[cotes[1], k]], axis=1))
+
+    # Cases « selle » (coins de signes alternés) : deux segments, choisis selon le signe au centre
+    k = np.nonzero(nombre == 4)[0]
+    if k.size:
+        centre_comme_a = (C[k] > 0) == pa[k]
+        # centre du signe de a et c : les coins b et d sont isolés → (bas, droit) et (haut, gauche)
+        # sinon a et c sont isolés → (bas, gauche) et (droit, haut)
+        premier = np.where(centre_comme_a, 1, 3)
+        second = np.where(centre_comme_a, 3, 1)
+        segments.append(np.stack([points[0, k], points[premier, k]], axis=1))
+        segments.append(np.stack([points[2, k], points[second, k]], axis=1))
+    return np.concatenate(segments) if segments else np.zeros((0, 2, 2))
 
 
 def echantillonner_courbe(expression, x0, x1, hauteur_vue, valeurs_parametres, n=2000):
