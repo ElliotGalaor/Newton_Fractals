@@ -20,24 +20,37 @@ Dans une visualisation :
     H              revenir à la vue de l'image calculée
     Entrée         (dans un champ) lancer le calcul
 
-Nécessite PySide6 et pyqtgraph, installés depuis PyPI (python -m pip install pyside6
-pyqtgraph) : les DLL Qt de MSYS2 ne sont pas signées et Windows peut les bloquer. Si le
-script est lancé avec un Python où Qt ne se charge pas, il se relance tout seul avec un
-autre Python où PySide6 fonctionne (par exemple celui de Windows).
+Nécessite PySide6, pyqtgraph et PyOpenGL, installés depuis PyPI (python -m pip install
+pyside6 pyqtgraph PyOpenGL). Le PySide6 de MSYS2 fonctionne mais est lent à charger (ses
+DLL ne sont pas signées : Windows les analyse, parfois les bloque) : si le script est lancé
+avec lui et qu'un Python avec le PySide6 officiel existe sur la machine, il se relance
+tout seul avec ce dernier.
 """
 import argparse
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 
+if not os.environ.get("NEWTON_FRACTALS_RELANCE"):   # (une seule fois, même si le script se relance)
+    print("Ouverture de l'interface...", flush=True)   # (le chargement de Qt peut prendre quelques secondes)
+
 import numpy as np
 
 
-def _relancer_avec_un_autre_python():
-    """Qt n'a pas pu être chargé avec ce Python (par exemple : DLL de MSYS2 non signées,
-    bloquées par le contrôle d'applications de Windows). On cherche un autre Python où
-    PySide6 et pyqtgraph fonctionnent, et on relance ce script avec lui."""
+def _vient_de_msys2(chemin):
+    return "msys64" in os.path.normcase(chemin or "")
+
+
+def _relancer_avec_un_autre_python(seulement_officiel=False):
+    """Relance ce script avec un autre Python où PySide6 et pyqtgraph se chargent.
+
+    Utilisé quand Qt ne se charge pas avec ce Python (DLL de MSYS2 non signées, bloquées
+    par le contrôle d'applications de Windows), et aussi pour préférer le PySide6
+    officiel (PyPI) à celui de MSYS2 : avec ce dernier, l'interface met de 7 à 40 secondes
+    à s'ouvrir (Windows analyse ses DLL non signées) et pyqtgraph y dessine mal.
+    Avec seulement_officiel=True, les Python de MSYS2 ne sont pas essayés."""
     if os.environ.get("NEWTON_FRACTALS_RELANCE"):
         return   # déjà relancé une fois : on n'insiste pas
     candidats = [os.path.join(os.environ.get("LOCALAPPDATA", ""), "Python", "bin", "python.exe"),
@@ -47,14 +60,15 @@ def _relancer_avec_un_autre_python():
     actuel = os.path.normcase(os.path.abspath(sys.executable))
     vus = set()
     for c in candidats:
-        if not c or not os.path.isfile(c):
+        if not c or not os.path.isfile(c) or (seulement_officiel and _vient_de_msys2(c)):
             continue
         cle = os.path.normcase(os.path.abspath(c))
         if cle == actuel or cle in vus:
             continue
         vus.add(cle)
         try:
-            essai = subprocess.run([c, "-c", "import PySide6.QtWidgets, pyqtgraph"],
+            essai = subprocess.run([c, "-c", "import PySide6, PySide6.QtWidgets, pyqtgraph, sys; "
+                                             "sys.exit('msys64' in PySide6.__file__.lower())"],
                                    capture_output=True, timeout=60)
         except (OSError, subprocess.SubprocessError):
             continue
@@ -63,6 +77,11 @@ def _relancer_avec_un_autre_python():
             sys.exit(subprocess.call([c, os.path.abspath(__file__)] + sys.argv[1:], env=env))
 
 
+# PySide6 de MSYS2 : on préfère, s'il existe, un Python avec le PySide6 officiel (bien plus rapide)
+_spec = importlib.util.find_spec("PySide6")
+if _spec is not None and _vient_de_msys2(_spec.origin):
+    _relancer_avec_un_autre_python(seulement_officiel=True)
+
 try:
     import pyqtgraph  # noqa: F401  (vérifie que pyqtgraph se charge avec ce Qt)
     from PySide6 import QtGui, QtWidgets
@@ -70,7 +89,7 @@ except ImportError as erreur_qt:
     _relancer_avec_un_autre_python()
     sys.exit(f"Impossible de charger Qt avec ce Python ({sys.executable}) :\n  {erreur_qt}\n\n"
              "Installe PySide6 et pyqtgraph dans ton Python Windows (leurs DLL sont signées) :\n"
-             '  & "$env:LOCALAPPDATA\\Python\\bin\\python.exe" -m pip install pyside6 pyqtgraph\n'
+             '  & "$env:LOCALAPPDATA\\Python\\bin\\python.exe" -m pip install pyside6 pyqtgraph PyOpenGL\n'
              "puis relance : python NewtonFractalsDrawing.py")
 
 import mandelbrot_calcul as mc

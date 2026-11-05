@@ -255,6 +255,8 @@ void Newton_Fractals(int dim_x, int dim_y, double max_x = 2, double min_x = -2, 
     command.precision(17);
     command << "python " << filename << " --bornes " << min_x << " " << max_x << " " << min_y << " " << max_y
             << " --eps " << eps << " --iterations " << iterations << " --polynome \"" << POLYNOME_DEFAUT << "\"";
+    // Le chargement de Qt peut prendre quelques secondes : on prévient pour éviter un Ctrl+C
+    cout << "Ouverture de l'interface graphique... (quelques secondes, ne pas interrompre)" << endl;
     system(command.str().c_str());
 }
 

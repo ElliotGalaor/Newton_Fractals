@@ -1,5 +1,6 @@
 """Page « Surfaces 3D » : tracé de surfaces z = f(x, y) dans R³, manipulables à la souris."""
 import os
+import sys
 import time
 
 import numpy as np
@@ -72,10 +73,15 @@ class VueSurfaces3D(QtWidgets.QWidget):
         gauche.addWidget(self.label_infos)
         gauche.addSpacing(4)
         if gl is None:
+            # Commande pour le Python réellement utilisé (pas forcément celui que « python » désigne)
+            if "msys64" in sys.executable.lower():
+                commande = "pacman -S mingw-w64-ucrt-x86_64-python-pyopengl"
+            else:
+                commande = f'& "{sys.executable}" -m pip install PyOpenGL'
             message = etiquette("La 3D a besoin de PyOpenGL, qui n'a pas pu être chargé :\n"
-                                f"{ERREUR_OPENGL}\n\nInstalle-le puis relance :\n"
-                                "    python -m pip install PyOpenGL\n"
-                                "    (MSYS2 : pacman -S mingw-w64-ucrt-x86_64-python-pyopengl)", "accroche")
+                                f"{ERREUR_OPENGL}\n\nInstalle-le pour ce Python, puis relance :\n"
+                                f"    {commande}", "accroche")
+            message.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
             message.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             gauche.addWidget(message, 1)
         else:
