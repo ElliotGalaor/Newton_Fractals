@@ -1,9 +1,13 @@
-"""Page « Surfaces 3D » : tracé de surfaces z = f(x, y) dans R³, manipulables à la souris."""
+"""Page « Surfaces 3D » : surfaces z = f(x, y) et équations en x, y, z (sphère…) dans R³,
+manipulables à la souris."""
 import os
 import sys
 import time
 
+import warnings
+
 import numpy as np
+import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 import expressions as ex
@@ -19,10 +23,12 @@ except Exception as e:   # PyOpenGL absent, ou OpenGL indisponible
     ERREUR_OPENGL = e
 
 FICHIER_ETAT = os.path.join(nc.DOSSIER, "surfaces3d.json")
+RESOLUTION_EQUATIONS = 120   # points par côté de la grille 3D des équations (120³ ≈ 1,7 million de points)
+RESOLUTION_APERCU = 56       # pendant qu'un curseur bouge : aperçu rapide
 FONCTIONS_DEPART = [{"texte": "z = sin(x) cos(y)"}]
 DOMAINE = {"min_x": -5.0, "max_x": 5.0, "min_y": -5.0, "max_y": 5.0, "resolution": 120, "limite_z": 5.0}
 CHAMPS = [("min_x", "x min", float), ("max_x", "x max", float), ("min_y", "y min", float),
-          ("max_y", "y max", float), ("resolution", "Points par côté", int), ("limite_z", "Couper z à ±", float)]
+          ("max_y", "y max", float), ("resolution", "Points par côté", int), ("limite_z", "z entre ± (coupure)", float)]
 
 # Dégradé pour la coloration selon la hauteur (bas → haut)
 _DEGRADE_HAUTEUR = np.array([[0x2b, 0x1e, 0x6e], [0x11, 0x8a, 0xb2], [0x06, 0xd6, 0xa0],
@@ -53,6 +59,13 @@ class VueSurfaces3D(QtWidgets.QWidget):
         self.minuteur.setSingleShot(True)
         self.minuteur.setInterval(60)
         self.minuteur.timeout.connect(self.redessiner)
+        # Pendant qu'un curseur bouge (ou s'anime), les équations sont calculées en aperçu
+        # rapide ; la pleine résolution revient peu après le dernier mouvement
+        self.apercu_rapide = False
+        self.minuteur_qualite = QtCore.QTimer(self)
+        self.minuteur_qualite.setSingleShot(True)
+        self.minuteur_qualite.setInterval(450)
+        self.minuteur_qualite.timeout.connect(self.pleine_resolution)
         self.construire_interface(etat)
         if gl is not None:
             self.vue_par_defaut()
@@ -96,9 +109,11 @@ class VueSurfaces3D(QtWidgets.QWidget):
 
         panneau, v = zone_defilante()
         v.addWidget(etiquette("Surfaces", "entete"))
-        v.addWidget(etiquette("Exemples : sin(x) cos(y),  x^2 - y^2,  exp(-(x²+y²)),  z = a sin(sqrt(x²+y²))",
+        v.addWidget(etiquette("Fonctions : sin(x) cos(y),  x^2 - y^2,  z = a sin(sqrt(x²+y²))\n"
+                              "Équations : x² + y² + z² = 9 (sphère),  x² + y² = 4,  x² + y² - z² = 1",
                               "libelle"))
-        self.liste = ListeFonctions(("x", "y"), ex.EXEMPLES_3D, etat.get("fonctions", FONCTIONS_DEPART))
+        self.liste = ListeFonctions(("x", "y"), ex.EXEMPLES_3D, etat.get("fonctions", FONCTIONS_DEPART),
+                                    equations=True)
         self.liste.changee.connect(self.fonctions_changees)
         v.addWidget(self.liste)
 
@@ -106,7 +121,7 @@ class VueSurfaces3D(QtWidgets.QWidget):
         self.titre_parametres = etiquette("PARAMÈTRES", "section")
         v.addWidget(self.titre_parametres)
         self.curseurs = Curseurs(etat.get("parametres"))
-        self.curseurs.changes.connect(self.minuteur.start)
+        self.curseurs.changes.connect(self.parametres_changes)
         v.addWidget(self.curseurs)
 
         v.addSpacing(10)
@@ -147,7 +162,8 @@ class VueSurfaces3D(QtWidgets.QWidget):
         self.label_statut.setWordWrap(True)
         v.addWidget(self.label_statut)
         v.addStretch(1)
-        v.addWidget(etiquette("Variables : x et y · paramètres : toute autre lettre (a, b, k…)\n"
+        v.addWidget(etiquette("Fonction z = f(x, y) : variables x, y · équation (avec =) : x, y et z\n"
+                              "Paramètres : toute autre lettre (a, b, k…)\n"
                               "Fonctions : sin cos tan exp ln log sqrt abs…   ·   π, e", "aide"))
         disposition.addWidget(panneau)
 
@@ -157,6 +173,18 @@ class VueSurfaces3D(QtWidgets.QWidget):
         self.curseurs.mettre_a_jour(noms)
         self.titre_parametres.setVisible(bool(noms))
         self.minuteur.start()
+
+    def parametres_changes(self):
+        self.apercu_rapide = True
+        # (sans relancer le délai s'il court déjà : pendant une animation, les changements
+        # arrivent toutes les 40 ms et le redessin n'aurait sinon jamais lieu)
+        if not self.minuteur.isActive():
+            self.minuteur.start()
+        self.minuteur_qualite.start()   # redémarre : la pleine résolution attend la fin du mouvement
+
+    def pleine_resolution(self):
+        self.apercu_rapide = False
+        self.redessiner()
 
     def domaine_change(self):
         try:
@@ -194,6 +222,13 @@ class VueSurfaces3D(QtWidgets.QWidget):
         for expression, couleur, visible, nom in self.liste.fonctions():
             if not visible:
                 continue
+            if expression.implicite:
+                surface, z_surface = self.surface_implicite(expression, couleur, parametres)
+                if surface is not None:
+                    self.vue3d.addItem(surface)
+                    self.surfaces.append(surface)
+                    z_vus.append(z_surface)
+                continue
             Z = expression.evaluer(dict(parametres, x=X, y=Y))
             trous = ~np.isfinite(Z)
             Z = np.clip(np.where(trous, 0.0, Z), -limite, limite)
@@ -216,9 +251,59 @@ class VueSurfaces3D(QtWidgets.QWidget):
         self.dessiner_axes()
         z_tous = np.concatenate(z_vus) if z_vus else np.array([])
         texte_z = (f"   ·   z ∈ [{z_tous.min():.3g}, {z_tous.max():.3g}]" if z_tous.size else "")
+        equations = any(e.implicite for e, _, v, _ in self.liste.fonctions() if v)
+        n3 = min(n, RESOLUTION_EQUATIONS)
+        texte_grille = f"{n} × {n} points" + (f" (équations : {n3}³)" if equations else "")
         self.label_infos.setText(f"x ∈ [{d['min_x']:g}, {d['max_x']:g}]   ·   y ∈ [{d['min_y']:g}, {d['max_y']:g}]"
-                                 f"{texte_z}   ·   {len(self.surfaces)} surface(s), {n} × {n} points")
+                                 f"{texte_z}   ·   {len(self.surfaces)} surface(s), {texte_grille}")
         self.sauvegarder()
+
+    def surface_implicite(self, expression, couleur, parametres):
+        """Surface F(x, y, z) = 0 sur le domaine (z entre ± la limite), par la méthode des
+        « marching cubes » : F est évaluée sur une grille 3D, et la surface est extraite là
+        où F change de signe (pg.isosurface). Renvoie (élément 3D ou None, hauteurs z)."""
+        d = self.domaine
+        n = min(d["resolution"], RESOLUTION_APERCU if self.apercu_rapide else RESOLUTION_EQUATIONS)
+        limite = d["limite_z"]
+        bornes = [(d["min_x"], d["max_x"]), (d["min_y"], d["max_y"]), (-limite, limite)]
+        axes = [np.linspace(a, b, n) for a, b in bornes]
+        X, Y, Z = np.meshgrid(*axes, indexing="ij")
+        F = expression.evaluer(dict(parametres, x=X, y=Y, z=Z))
+        trous = np.isnan(F)
+        if trous.all():
+            return None, np.array([])
+        F = np.where(trous, np.nanmax(np.abs(F)) + 1.0, F)
+        with warnings.catch_warnings(), np.errstate(all="ignore"):
+            warnings.simplefilter("ignore")   # (avertissements sans conséquence de pyqtgraph 0.13 avec numpy 2)
+            sommets, faces = pg.isosurface(F, 0.0)
+        if not len(faces):
+            return None, np.array([])
+        # Au bord d'une zone où F n'est pas définie (ex. sqrt d'un négatif), le changement de
+        # signe est artificiel : on retire les triangles qui touchent ces cases.
+        if trous.any():
+            voisins = trous.copy()
+            for axe in range(3):
+                voisins |= np.roll(trous, 1, axis=axe) | np.roll(trous, -1, axis=axe)
+            indices = np.clip(np.floor(sommets).astype(int), 0, n - 1)
+            sommet_douteux = voisins[indices[:, 0], indices[:, 1], indices[:, 2]]
+            faces = faces[~sommet_douteux[faces].any(axis=1)]
+            if not len(faces):
+                return None, np.array([])
+        # Coordonnées de grille → coordonnées réelles
+        sommets = np.asarray(sommets, dtype=float)
+        for k, (a, b) in enumerate(bornes):
+            sommets[:, k] = a + sommets[:, k] * (b - a) / (n - 1)
+        z = sommets[:, 2]
+        if self.case_hauteur.isChecked():
+            rgb = couleurs_hauteur(z, -limite, limite)
+        else:
+            t = (z - z.min()) / max(np.ptp(z), 1e-12)
+            rgb = hex_rgb(couleur)[None, :] * (0.55 + 0.45 * t[:, None])
+        couleurs = np.concatenate([rgb, np.ones((len(z), 1))], axis=1).astype(np.float32)
+        maillage = gl.MeshData(vertexes=sommets, faces=faces, vertexColors=couleurs)
+        surface = gl.GLMeshItem(meshdata=maillage, smooth=True, shader="shaded",
+                                drawEdges=self.case_fil.isChecked(), edgeColor=(1, 1, 1, 0.25), glOptions="opaque")
+        return surface, z
 
     def dessiner_axes(self):
         d = self.domaine

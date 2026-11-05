@@ -31,27 +31,34 @@ _JETON = re.compile(r"\s*(?:(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)"
                     r"|([A-Za-z][A-Za-z0-9]*)"                                        # lettres
                     r"|(\*\*|[-+*/^(),]))")                                           # opérateur
 _REMPLACEMENTS = {"π": "pi", "²": "^2", "³": "^3", "×": "*", "·": "*", "−": "-", "÷": "/"}
-_PREFIXE = re.compile(r"^\s*(?:([A-Za-z]\w*)\s*\(\s*[A-Za-z\s,]*\)|([yz]))\s*=\s*")
+# « f(x) = » ou « y = » (plan), « f(x, y) = » ou « z = » (espace) : définition d'une fonction
+_PREFIXES = {lettre: re.compile(r"^\s*(?:([A-Za-z]\w*)\s*\(\s*[A-Za-z\s,]*\)|(" + lettre + r"))\s*=\s*")
+             for lettre in "yz"}
 
 EXEMPLES_2D = ["sin(x)", "x^2 + y^2 = 4", "x^2 - 3", "x^2/9 + y^2/4 = 1", "exp(-x^2)", "y^2 = x^3 - x",
                "a sin(b x)", "(x^2 + y^2)^2 = 8 x y", "1/x", "sin(x) = cos(y)", "sqrt(4 - x^2)",
                "x^2 - y^2 = 1", "ln(x)", "x = 2", "tan(x)", "sin(x)/x"]
-EXEMPLES_3D = ["sin(x) cos(y)", "x^2 - y^2", "exp(-(x^2 + y^2))", "a sin(sqrt(x^2 + y^2))",
-               "cos(x y)", "x y / (1 + x^2 + y^2)", "sin(x) + cos(y)", "abs(x) + abs(y)"]
+EXEMPLES_3D = ["sin(x) cos(y)", "x^2 + y^2 + z^2 = 9", "x^2 - y^2", "(sqrt(x^2 + y^2) - 3)^2 + z^2 = 1",
+               "exp(-(x^2 + y^2))", "x^2 + y^2 - z^2 = 1", "a sin(sqrt(x^2 + y^2))", "x^2/16 + y^2/4 + z^2 = 1",
+               "cos(x y)", "x^2 + y^2 = 4", "cos(x) + cos(y) + cos(z) = 0", "x y / (1 + x^2 + y^2)",
+               "x^2 + y^2 = z^2", "abs(x) + abs(y)"]
 
 
 class Expression:
     """Fonction réelle lue depuis un texte. evaluer() prend un dictionnaire de valeurs
     (variables et paramètres, tableaux numpy ou nombres) et renvoie un tableau.
 
-    Avec equations=True (plan 2D), un texte de la forme « gauche = droite » qui ne définit
-    pas simplement y ou f(x) est une équation en x et y (courbe implicite, ex. un cercle
-    x² + y² = 4) : implicite vaut alors True et evaluer() renvoie gauche - droite, dont
-    la courbe est l'ensemble des points où cette valeur s'annule."""
+    Avec equations=True, un texte de la forme « gauche = droite » qui ne définit pas
+    simplement la fonction (y = …, f(x) = … dans le plan ; z = …, f(x, y) = … dans l'espace)
+    est une équation : en x et y dans le plan (courbe implicite, ex. le cercle x² + y² = 4),
+    en x, y et z dans l'espace (surface implicite, ex. la sphère x² + y² + z² = 9).
+    implicite vaut alors True et evaluer() renvoie gauche - droite : la courbe ou la surface
+    est l'ensemble des points où cette valeur s'annule."""
 
     def __init__(self, texte, variables, equations=False):
         self.texte = texte
-        self.nom, corps = _separer_prefixe(texte)
+        dans_le_plan = len(variables) == 1
+        self.nom, corps = _separer_prefixe(texte, "y" if dans_le_plan else "z")
         self.corps = " ".join(corps.split())
         self.implicite = "=" in corps
         if self.implicite:
@@ -61,9 +68,10 @@ class Expression:
                 raise ValueError("une équation ne contient qu'un seul signe =")
             gauche, droite = corps.split("=")
             if not gauche.strip() or not droite.strip():
-                raise ValueError("il manque un membre de l'équation (ex. x² + y² = 4)")
+                raise ValueError("il manque un membre de l'équation (ex. "
+                                 + ("x² + y² = 4)" if dans_le_plan else "x² + y² + z² = 9)"))
             self.nom = None
-            self.variables = ("x", "y")
+            self.variables = ("x", "y") if dans_le_plan else ("x", "y", "z")
             self.arbre, self.parametres = _analyser(f"({gauche}) - ({droite})", self.variables)
         else:
             self.variables = tuple(variables)
@@ -78,12 +86,12 @@ class Expression:
         return resultat
 
 
-def _separer_prefixe(texte):
-    """« f(x) = … » ou « y = … » → (nom ou None, reste)."""
+def _separer_prefixe(texte, lettre="y"):
+    """« f(x) = … » ou « y = … » (lettre « z » dans l'espace) → (nom ou None, reste)."""
     t = texte
     for a, b in _REMPLACEMENTS.items():
         t = t.replace(a, b)
-    m = _PREFIXE.match(t)
+    m = _PREFIXES[lettre].match(t)
     if not m or m.group(1) in FONCTIONS:   # « sin(x) = cos(y) » est une équation, pas une définition
         return None, t
     return m.group(1), t[m.end():]
@@ -150,6 +158,8 @@ def _analyser(texte, variables, equations=False):
     except ValueError as e:
         if equations and str(e).startswith("y n'est pas"):
             raise ValueError("y est permis dans une équation : écris-la avec =, ex. x² + y² = 4")
+        if equations and str(e).startswith("z n'est pas"):
+            raise ValueError("z est permis dans une équation : écris-la avec =, ex. x² + y² + z² = 9")
         raise
     return arbre, sorted(parametres)
 

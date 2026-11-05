@@ -14,7 +14,8 @@ page that presents the available visualizations:
 - **2D graphs** — curves y = f(x) and equations in x and y (circles, ellipses…) in the
   plane, in the spirit of GeoGebra: type a formula,
   the curve appears as you type.
-- **3D surfaces** — surfaces z = f(x, y) in space, lit and coloured, rotated and zoomed
+- **3D surfaces** — surfaces z = f(x, y) and equations in x, y and z (spheres, tori…) in
+  space, lit and coloured, rotated and zoomed
   with the mouse.
 
 ## Features
@@ -73,7 +74,13 @@ page that presents the available visualizations:
 
 - Several surfaces z = f(x, y), lit (shaded), coloured per surface or by height,
   optional wireframe, axes and grid; drag to rotate, wheel to zoom.
-- Parameters with animated sliders, as in 2D.
+- **Equations in x, y and z** (implicit surfaces) such as `x² + y² + z² = 9` (sphere),
+  `(sqrt(x² + y²) - 3)² + z² = 1` (torus), `x² + y² - z² = 1` (hyperboloid) or
+  `x² + y² = 4` (cylinder), extracted with the marching cubes algorithm on a 120³ grid
+  (about 0.15 s per surface).
+- Parameters with animated sliders, as in 2D; while a slider moves, equations are drawn
+  as a fast preview (56³ grid, ~10 frames per second) and recomputed at full resolution
+  when it stops.
 - Adjustable domain, resolution (points per side) and z clipping; holes in the domain of
   definition (e.g. `sqrt(4 - x² - y²)`) are left transparent.
 
@@ -180,6 +187,7 @@ Type one function per line in the *Fonctions* / *Surfaces* panel; it is drawn as
 | `sin(x)`, `y = x^2 - 3`, `f(x) = 2x exp(-x)` | 2D: a function of `x` (a name like `f(x) =` is optional) |
 | `x^2 + y^2 = 4`, `y^2 = x^3 - x`, `sin(x) = cos(y)`, `x = 2` | 2D: an equation in `x` and `y` — any `=` that does not simply define `y` or `f(x)` |
 | `sin(x) cos(y)`, `z = x^2 - y^2`, `g(x, y) = …` | 3D: a function of `x` and `y` |
+| `x^2 + y^2 + z^2 = 9`, `x^2 + y^2 = 4`, `y = x^2` | 3D: an equation in `x`, `y` and `z` — any `=` that does not simply define `z` or `f(x, y)` |
 | `x^2`, `x**2`, `x²` | powers |
 | `2x`, `x sin(x)`, `(x-1)(x+1)`, `2pi x` | implicit multiplication |
 | `a sin(b x)` | any other single letter is a parameter with a slider (default 1, range −10…10) |
@@ -266,7 +274,9 @@ ConsoleApplication2/
   points yet). An equation is drawn where its two sides are equal on a grid of about one
   point every 2.5 pixels: details smaller than that, or curves where the two sides touch
   without crossing (e.g. `(x² + y² - 4)² = 0`), may be missed.
-- 3D: explicit surfaces z = f(x, y) only; they are clipped to ±"Couper z à" to keep the
-  view readable.
+- 3D: explicit surfaces z = f(x, y) and equations in x, y and z (no parametric surfaces
+  yet). Surfaces are limited to z between ± the "z entre ±" setting, which is also the
+  z extent of the grid used for equations; as in 2D, details smaller than a grid cell
+  (1/120 of the domain) or surfaces that touch zero without crossing may be missed.
 - Inside the plotting area, only plain Qt graphics items are used (curves, axes, fractal
   images): pyqtgraph's own plot items do not render with the PySide6 6.9 build of MSYS2.
