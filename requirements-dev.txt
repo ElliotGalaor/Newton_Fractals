@@ -1,0 +1,4 @@
+# Outils de développement : tests et analyse statique
+-r requirements.txt
+pytest>=8
+ruff>=0.5

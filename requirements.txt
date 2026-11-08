@@ -1,0 +1,5 @@
+# Dépendances de l'interface graphique (python -m pip install -r requirements.txt)
+numpy>=1.24
+PySide6>=6.5
+pyqtgraph>=0.13
+PyOpenGL>=3.1   # uniquement pour la page « Surfaces 3D »
