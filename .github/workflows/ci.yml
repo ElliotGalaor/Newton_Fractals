@@ -34,8 +34,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # (sous Python 3.10, PySide6 fait planter l'interpréteur à la sortie : « none_dealloc »)
-        python: ["3.11", "3.13"]
+        include:
+          # Version minimale : logique et moteur. Les tests d'interface n'y sont pas lancés :
+          # PySide6 y fait planter l'interpréteur pendant sa fermeture (« none_dealloc »),
+          # une fois tous les tests passés.
+          - python: "3.11"
+            options: "--ignore=tests/test_interface.py"
+          # Version récente : toute la suite, interface Qt hors écran comprise
+          - python: "3.13"
+            options: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +66,7 @@ jobs:
         env:
           MAIN_EXE: ${{ github.workspace }}/ConsoleApplication2/main
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -v
+        run: python -m pytest -v ${{ matrix.options }}
 
   windows-mingw:
     name: Windows · MinGW
@@ -70,7 +77,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          install: mingw-w64-ucrt-x86_64-gcc
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-libgomp
 
       # (le gcc récent de MSYS2 ne fournit plus OpenMP en bibliothèque statique : les DLL
       # nécessaires sont copiées à côté de l'exécutable, qui tourne ainsi sans MSYS2)
