@@ -1,0 +1,69 @@
+# Déploiement continu : pousser un tag vX.Y.Z publie une GitHub Release contenant
+# une archive Windows prête à l'emploi (moteur compilé + interface Python).
+# Lancé à la main (workflow_dispatch), il construit l'archive sans rien publier.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Archive Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-libgomp
+
+      # (les DLL de MinGW, dont OpenMP, sont jointes à l'archive : rien à installer côté C++)
+      - name: Compiler le moteur C++ et joindre ses DLL
+        shell: msys2 {0}
+        working-directory: ConsoleApplication2
+        run: |
+          g++ -std=c++14 -O2 -fopenmp -o main.exe main.cpp Tableau.cpp CNum.cpp
+          for dll in $(ldd main.exe | awk '/ucrt64/ {print $3}'); do cp "$dll" .; done
+          ls -l main.exe *.dll
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Vérifier le moteur avant de le publier
+        env:
+          MAIN_EXE: ${{ github.workspace }}\ConsoleApplication2\main.exe
+        run: |
+          python -m pip install numpy pytest
+          python -m pytest tests/test_moteur.py -v
+
+      - name: Assembler l'archive
+        id: archive
+        shell: pwsh
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
+          $dossier = "NewtonFractals-$version-windows"
+          New-Item -ItemType Directory $dossier | Out-Null
+          Copy-Item ConsoleApplication2\main.exe, ConsoleApplication2\*.dll, ConsoleApplication2\*.py $dossier
+          Copy-Item requirements.txt, README.md, packaging\QUICKSTART.txt $dossier
+          Compress-Archive -Path $dossier -DestinationPath "$dossier.zip"
+          "nom=$dossier" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.nom }}
+          path: ${{ steps.archive.outputs.nom }}.zip
+
+      - name: Publier la release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}" "${{ steps.archive.outputs.nom }}.zip"
+          --title "Newton Fractals ${{ github.ref_name }}" --generate-notes --verify-tag
