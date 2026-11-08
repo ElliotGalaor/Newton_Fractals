@@ -85,7 +85,7 @@ between sessions.
 ## Requirements
 
 - **C++ compiler** with OpenMP: Visual Studio 2022 (MSVC v143) or g++ (e.g. MSYS2 UCRT64).
-- **Python 3.10+** with `numpy`, `PySide6`, `pyqtgraph` and `PyOpenGL` (PyOpenGL is only
+- **Python 3.11+** with `numpy`, `PySide6`, `pyqtgraph` and `PyOpenGL` (PyOpenGL is only
   needed for the 3D surfaces page, which explains how to install it if it is missing):
 
 ```bash

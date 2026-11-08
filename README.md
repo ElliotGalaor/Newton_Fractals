@@ -10,7 +10,7 @@ curves and surfaces in 2D and 3D, the way GeoGebra does.
 [![CI](https://github.com/ElliotGalaor/Newton_Fractals/actions/workflows/ci.yml/badge.svg)](https://github.com/ElliotGalaor/Newton_Fractals/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ElliotGalaor/Newton_Fractals?display_name=tag&sort=semver)](https://github.com/ElliotGalaor/Newton_Fractals/releases/latest)
 ![C++](https://img.shields.io/badge/C%2B%2B-OpenMP-00599C?logo=cplusplus&logoColor=white)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/Qt-PySide6-41CD52?logo=qt&logoColor=white)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20Linux-lightgrey)
 
@@ -101,8 +101,8 @@ The window opens on the home page; `Ctrl+1` … `Ctrl+4` open the four visualiza
   injection), polynomial roots, number formatting, binary formats, integration tests of the
   C++ engine on known results, and smoke tests of the Qt interface running off-screen.
 - **Continuous integration** — every push and pull request: `ruff` lint; Linux build
-  with `-Wall -Wextra` and the full test suite on Python 3.10 and 3.13; Windows builds
-  with MinGW (static executable) and with MSBuild (Visual Studio solution).
+  with `-Wall -Wextra` and the full test suite on Python 3.11 and 3.13; Windows builds
+  with MinGW (DLLs bundled next to the executable) and with MSBuild (Visual Studio solution).
 - **Continuous delivery** — pushing a `vX.Y.Z` tag builds, tests and publishes a
   Windows archive as a GitHub Release, with release notes generated from merged PRs.
 - **Team workflow** — work is tracked in issues and delivered through reviewed pull
