@@ -3,7 +3,6 @@ manipulables à la souris."""
 import os
 import sys
 import time
-
 import warnings
 
 import numpy as np
@@ -219,7 +218,7 @@ class VueSurfaces3D(QtWidgets.QWidget):
         parametres = self.curseurs.valeurs_actuelles()
         limite = d["limite_z"]
         z_vus = []
-        for expression, couleur, visible, nom in self.liste.fonctions():
+        for expression, couleur, visible, _nom in self.liste.fonctions():
             if not visible:
                 continue
             if expression.implicite:

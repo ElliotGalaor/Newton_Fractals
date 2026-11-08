@@ -151,15 +151,15 @@ def _analyser(texte, variables, equations=False):
     try:
         arbre = ast.parse(" ".join(morceaux), mode="eval")
     except SyntaxError:
-        raise ValueError("expression mal écrite")
+        raise ValueError("expression mal écrite") from None
     parametres = set()
     try:
         _verifier(arbre, variables, parametres)
     except ValueError as e:
         if equations and str(e).startswith("y n'est pas"):
-            raise ValueError("y est permis dans une équation : écris-la avec =, ex. x² + y² = 4")
+            raise ValueError("y est permis dans une équation : écris-la avec =, ex. x² + y² = 4") from None
         if equations and str(e).startswith("z n'est pas"):
-            raise ValueError("z est permis dans une équation : écris-la avec =, ex. x² + y² + z² = 9")
+            raise ValueError("z est permis dans une équation : écris-la avec =, ex. x² + y² + z² = 9") from None
         raise
     return arbre, sorted(parametres)
 

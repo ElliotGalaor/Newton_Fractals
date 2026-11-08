@@ -69,7 +69,7 @@ def _apercu_graphe2d(largeur, hauteur):
     for y, couleur in ((np.sin(x) * 1.5, "#4cc9f0"), (x ** 2 / 6 - 2.2, "#f72585"),
                        (2.6 * np.exp(-x ** 2 / 2), "#ffd166"), (0.08 * x ** 3 - 0.9 * x, "#06d6a0")):
         chemin = QtGui.QPainterPath(ecran(x[0], y[0]))
-        for xi, yi in zip(x[1:], y[1:]):
+        for xi, yi in zip(x[1:], y[1:], strict=True):
             chemin.lineTo(ecran(xi, yi))
         p.setPen(QtGui.QPen(QtGui.QColor(couleur), largeur / 140))
         p.drawPath(chemin)

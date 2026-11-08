@@ -134,7 +134,7 @@ class ListeFonctions(QtWidgets.QWidget):
 
     def ajouter(self, texte, couleur=None, visible=True, signaler=True):
         if couleur is None:
-            utilisees = {l.couleur for l in self.lignes}
+            utilisees = {ligne.couleur for ligne in self.lignes}
             couleur = next((c for c in COULEURS_COURBES if c not in utilisees),
                            COULEURS_COURBES[len(self.lignes) % len(COULEURS_COURBES)])
         ligne = LigneFonction(texte, couleur, visible, self.variables, self.equations)
@@ -171,25 +171,25 @@ class ListeFonctions(QtWidgets.QWidget):
     def fonctions(self):
         """[(expression, couleur, visible, nom affiché)] des fonctions lisibles, noms automatiques f, g, h…
         (les équations, comme x² + y² = 4, n'ont pas de nom : leur nom affiché est None)"""
-        pris = {l.expression.nom for l in self.lignes if l.expression and l.expression.nom}
+        pris = {ligne.expression.nom for ligne in self.lignes if ligne.expression and ligne.expression.nom}
         libres = [n for n in NOMS_AUTO if n not in pris] + list(string.ascii_uppercase)
         resultat = []
-        for l in self.lignes:
-            if l.expression is None:
+        for ligne in self.lignes:
+            if ligne.expression is None:
                 continue
-            nom = None if l.expression.implicite else (l.expression.nom or libres.pop(0))
-            resultat.append((l.expression, l.couleur, l.case.isChecked(), nom))
+            nom = None if ligne.expression.implicite else (ligne.expression.nom or libres.pop(0))
+            resultat.append((ligne.expression, ligne.couleur, ligne.case.isChecked(), nom))
         return resultat
 
     def parametres(self):
         noms = set()
-        for l in self.lignes:
-            if l.expression is not None:
-                noms.update(l.expression.parametres)
+        for ligne in self.lignes:
+            if ligne.expression is not None:
+                noms.update(ligne.expression.parametres)
         return sorted(noms)
 
     def etat(self):
-        return [l.etat() for l in self.lignes]
+        return [ligne.etat() for ligne in self.lignes]
 
 
 class Curseurs(QtWidgets.QWidget):
