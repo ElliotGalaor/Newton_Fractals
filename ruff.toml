@@ -1,0 +1,16 @@
+# Analyse statique Python (ruff check .)
+line-length = 120
+target-version = "py311"
+
+[lint]
+# Erreurs (E4/E7/E9), pyflakes (F), ordre des imports (I), pièges courants (B)
+select = ["E4", "E7", "E9", "F", "I", "B"]
+
+[lint.isort]
+known-first-party = ["accueil", "expressions", "interface_commune", "mandelbrot_calcul", "newton_calcul",
+                     "vue_graphe2d", "vue_mandelbrot", "vue_newton", "vue_surfaces3d", "widgets_fonctions",
+                     "NewtonFractalsDrawing"]
+
+[lint.per-file-ignores]
+# Imports volontairement après la vérification de Qt (relance avec un autre Python si besoin)
+"ConsoleApplication2/NewtonFractalsDrawing.py" = ["E402"]

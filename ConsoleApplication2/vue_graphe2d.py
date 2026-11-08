@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 import expressions as ex
 import newton_calcul as nc
-from interface_commune import BORDURE, FOND, SUCCES, ERREUR, TEXTE, TEXTE_DOUX, etiquette
+from interface_commune import BORDURE, ERREUR, FOND, SUCCES, TEXTE, TEXTE_DOUX, etiquette
 from widgets_fonctions import Curseurs, ListeFonctions, barre_titre, charger_etat, sauver_etat, zone_defilante
 
 FICHIER_ETAT = os.path.join(nc.DOSSIER, "graphes2d.json")
@@ -214,7 +214,7 @@ class VueGraphe2D(QtWidgets.QWidget):
         parametres = self.curseurs.valeurs_actuelles()
         meilleur, distance_min = None, None
         valeurs = []
-        for courbe, expression, nom, couleur in self.courbes:
+        for _courbe, expression, nom, couleur in self.courbes:
             if expression.implicite:
                 continue   # (une équation ne donne pas une valeur de y pour chaque x)
             yv = float(expression.evaluer(dict(parametres, x=np.array([p.x()])))[0])

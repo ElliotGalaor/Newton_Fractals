@@ -41,7 +41,7 @@ COULEUR_NON_CONVERGENCE = "#262a36"
 def lire_resultats(chemin):
     """Renvoie le tableau des indices de racine, une ligne par valeur de y."""
     with open(chemin) as f:
-        lignes = [l for l in f.read().splitlines() if l.strip()]
+        lignes = [ligne for ligne in f.read().splitlines() if ligne.strip()]
     tableau = np.array(" ".join(lignes).split(), dtype=np.int16).reshape(len(lignes), -1)
     return tableau.T  # results.txt contient une ligne par valeur de x
 
@@ -134,11 +134,11 @@ def _vers_polynome(texte, contexte="Polynôme"):
     try:
         arbre = ast.parse(" ".join(morceaux), mode="eval")
     except SyntaxError:
-        raise ValueError(f"{contexte} : expression mal écrite")
+        raise ValueError(f"{contexte} : expression mal écrite") from None
     try:
         return _evaluer(arbre).trim()
     except ValueError as e:
-        raise ValueError(str(e).replace("Polynôme", contexte, 1))
+        raise ValueError(str(e).replace("Polynôme", contexte, 1)) from None
 
 
 def grouper_racines(valeurs):
@@ -557,7 +557,7 @@ def lire_nombres(textes, champs=None):
         try:
             p[cle] = type_(float(texte)) if type_ is int else float(texte)
         except ValueError:
-            raise ValueError(f"« {libelle} » : nombre invalide")
+            raise ValueError(f"« {libelle} » : nombre invalide") from None
     return p
 
 
