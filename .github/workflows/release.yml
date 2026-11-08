@@ -21,7 +21,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
-          install: mingw-w64-ucrt-x86_64-gcc
+          install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-libgomp
 
       # (les DLL de MinGW, dont OpenMP, sont jointes à l'archive : rien à installer côté C++)
       - name: Compiler le moteur C++ et joindre ses DLL
