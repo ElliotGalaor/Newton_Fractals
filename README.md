@@ -101,7 +101,7 @@ The window opens on the home page; `Ctrl+1` … `Ctrl+4` open the four visualiza
   injection), polynomial roots, number formatting, binary formats, integration tests of the
   C++ engine on known results, and smoke tests of the Qt interface running off-screen.
 - **Continuous integration** — every push and pull request: `ruff` lint; Linux build
-  with `-Wall -Wextra` and the full test suite on Python 3.11 and 3.13; Windows builds
+  with `-Wall -Wextra` and the full test suite (Python 3.13; logic and engine also on 3.11); Windows builds
   with MinGW (DLLs bundled next to the executable) and with MSBuild (Visual Studio solution).
 - **Continuous delivery** — pushing a `vX.Y.Z` tag builds, tests and publishes a
   Windows archive as a GitHub Release, with release notes generated from merged PRs.
