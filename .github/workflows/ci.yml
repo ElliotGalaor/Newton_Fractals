@@ -34,7 +34,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.10", "3.13"]
+        # (sous Python 3.10, PySide6 fait planter l'interpréteur à la sortie : « none_dealloc »)
+        python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
 
@@ -61,7 +62,7 @@ jobs:
         run: python -m pytest -v
 
   windows-mingw:
-    name: Windows · MinGW (exécutable statique)
+    name: Windows · MinGW
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,11 +72,15 @@ jobs:
           msystem: UCRT64
           install: mingw-w64-ucrt-x86_64-gcc
 
-      - name: "Compiler le moteur C++ (statique, aucune DLL OpenMP à installer)"
+      # (le gcc récent de MSYS2 ne fournit plus OpenMP en bibliothèque statique : les DLL
+      # nécessaires sont copiées à côté de l'exécutable, qui tourne ainsi sans MSYS2)
+      - name: Compiler le moteur C++ et joindre ses DLL
         shell: msys2 {0}
         working-directory: ConsoleApplication2
         run: |
-          g++ -std=c++14 -O2 -fopenmp -Wall -Wextra -static -o main.exe main.cpp Tableau.cpp CNum.cpp
+          g++ -std=c++14 -O2 -fopenmp -Wall -Wextra -o main.exe main.cpp Tableau.cpp CNum.cpp
+          for dll in $(ldd main.exe | awk '/ucrt64/ {print $3}'); do cp "$dll" .; done
+          ls -l main.exe *.dll
           ./main.exe --aide
 
       - uses: actions/setup-python@v5
@@ -92,7 +97,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: moteur-windows
-          path: ConsoleApplication2/main.exe
+          path: |
+            ConsoleApplication2/main.exe
+            ConsoleApplication2/*.dll
           retention-days: 30
 
   windows-msvc:
