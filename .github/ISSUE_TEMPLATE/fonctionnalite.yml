@@ -1,0 +1,21 @@
+name: Fonctionnalité
+description: Proposer une amélioration ou une nouvelle visualisation
+labels: [enhancement]
+body:
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Besoin
+      description: Le problème à résoudre ou ce que la fonctionnalité permettrait.
+    validations:
+      required: true
+  - type: textarea
+    id: proposition
+    attributes:
+      label: Proposition
+      description: Comment cela pourrait fonctionner (interface, syntaxe, options…).
+  - type: textarea
+    id: criteres
+    attributes:
+      label: Critères d'acceptation
+      placeholder: "- [ ] …"
