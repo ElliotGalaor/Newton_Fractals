@@ -1,0 +1,15 @@
+# Classement des notes de version générées automatiquement (gh release create --generate-notes)
+changelog:
+  categories:
+    - title: Nouveautés
+      labels: [enhancement]
+    - title: Corrections
+      labels: [bug]
+    - title: Tests
+      labels: [tests]
+    - title: Intégration et déploiement continus
+      labels: [ci/cd]
+    - title: Documentation
+      labels: [documentation]
+    - title: Autres changements
+      labels: ["*"]

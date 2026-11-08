@@ -1,0 +1,31 @@
+NEWTON FRACTALS - QUICK START (Windows)
+========================================
+
+This archive contains the C++ engine, already compiled (main.exe, no extra DLL
+needed), and the Qt interface written in Python.
+
+1. Install Python 3.10 or newer (https://www.python.org/downloads/), then the
+   interface dependencies, from this folder:
+
+       python -m pip install -r requirements.txt
+
+2. Start the application, either:
+
+   - by double-clicking main.exe (it computes a first fractal, then opens the
+     interface), or
+   - from a terminal opened in this folder:
+
+       python NewtonFractalsDrawing.py
+
+The window opens on the home page: Newton fractals, Mandelbrot set, 2D graphs
+and 3D surfaces. Ctrl+0 brings you back to the home page.
+
+First launch can take a few seconds while Windows checks the files.
+
+Full documentation: README.md, or https://github.com/ElliotGalaor/Newton_Fractals
+
+
+DÉMARRAGE RAPIDE (français)
+---------------------------
+1. Installer Python 3.10+, puis :  python -m pip install -r requirements.txt
+2. Double-cliquer sur main.exe, ou lancer :  python NewtonFractalsDrawing.py
