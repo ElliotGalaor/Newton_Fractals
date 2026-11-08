@@ -1,0 +1,31 @@
+name: Bug
+description: Signaler un comportement incorrect
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Ce qui se passe
+      description: Le comportement observé, avec le message d'erreur s'il y en a un.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduire
+    attributes:
+      label: Pour reproduire
+      description: Les étapes, la visualisation concernée, la formule ou les paramètres saisis.
+      placeholder: |
+        1. Ouvrir « Graphes 2D »
+        2. Saisir x^2 + y^2 = 4
+        3. …
+    validations:
+      required: true
+  - type: textarea
+    id: attendu
+    attributes:
+      label: Ce qui était attendu
+  - type: input
+    id: environnement
+    attributes:
+      label: Environnement
+      placeholder: "Windows 11, Python 3.12, PySide6 6.9, version v1.0.0"
