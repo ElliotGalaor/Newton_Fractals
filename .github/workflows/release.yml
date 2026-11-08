@@ -23,10 +23,14 @@ jobs:
           msystem: UCRT64
           install: mingw-w64-ucrt-x86_64-gcc
 
-      - name: "Compiler le moteur C++ (statique, aucune DLL OpenMP à installer)"
+      # (les DLL de MinGW, dont OpenMP, sont jointes à l'archive : rien à installer côté C++)
+      - name: Compiler le moteur C++ et joindre ses DLL
         shell: msys2 {0}
         working-directory: ConsoleApplication2
-        run: g++ -std=c++14 -O2 -fopenmp -static -o main.exe main.cpp Tableau.cpp CNum.cpp
+        run: |
+          g++ -std=c++14 -O2 -fopenmp -o main.exe main.cpp Tableau.cpp CNum.cpp
+          for dll in $(ldd main.exe | awk '/ucrt64/ {print $3}'); do cp "$dll" .; done
+          ls -l main.exe *.dll
 
       - uses: actions/setup-python@v5
         with:
@@ -46,7 +50,7 @@ jobs:
           $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
           $dossier = "NewtonFractals-$version-windows"
           New-Item -ItemType Directory $dossier | Out-Null
-          Copy-Item ConsoleApplication2\main.exe, ConsoleApplication2\*.py $dossier
+          Copy-Item ConsoleApplication2\main.exe, ConsoleApplication2\*.dll, ConsoleApplication2\*.py $dossier
           Copy-Item requirements.txt, README.md, packaging\QUICKSTART.txt $dossier
           Compress-Archive -Path $dossier -DestinationPath "$dossier.zip"
           "nom=$dossier" >> $env:GITHUB_OUTPUT
