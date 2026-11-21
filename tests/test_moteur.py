@@ -56,7 +56,7 @@ def test_mandelbrot(moteur, tmp_path):
     r = moteur("--mandelbrot", "--taille", 100, 100, "--bornes", -2, 2, -2, 2, "--iterations", 300,
                "--binaire", sortie)
     assert r.returncode == 0, r.stderr
-    mu = mc.lire_binaire(str(sortie))                 # pixel (i, j) au point -2 + 0.04 i, -2 + 0.04 j
+    mu = mc.lire_binaire(str(sortie))                 # pixel (i, j) centré en -2 + 0.04 (i + ½), -2 + 0.04 (j + ½)
     assert mu[50, 50] < 0                             # c = 0
     assert mu[50, 25] < 0                             # c = -1
     assert 0 < mu[50, 75] < 10                        # c = 1
@@ -69,6 +69,9 @@ def test_mandelbrot(moteur, tmp_path):
     (["--taille", 0, 10, "--binaire", "x.bin"], "1 pixel"),
     (["--bornes", 1, 0, -1, 1, "--binaire", "x.bin"], "MIN < MAX"),
     (["--coefs", 2, 1, 0, -1, 0, "--binaire", "x.bin"], "ensemble"),
+    (["--bornes", "nan", 1, -1, 1, "--binaire", "x.bin"], "Nombre invalide"),
+    (["--eps", "inf", "--binaire", "x.bin"], "Nombre invalide"),
+    (["--taille", "1e12", 10, "--binaire", "x.bin"], "trop grande"),
 ])
 def test_erreurs(moteur, tmp_path, options, message):
     r = moteur(*options, cwd=tmp_path)

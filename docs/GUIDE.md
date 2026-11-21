@@ -231,7 +231,8 @@ main.exe --mandelbrot --taille 1000 800 --bornes -2.5 1 -1.4 1.4 --iterations 50
 
 All binary files start with an 8-byte header — `dim_x` and `dim_y` as little-endian
 `int32` — followed by one value per pixel, x-major (all y values for the first x, then
-the next x…).
+the next x…). Pixel (i, j) is computed at its centre:
+x = MIN_X + (i + ½)·(MAX_X − MIN_X)/dim_x, y = MIN_Y + (j + ½)·(MAX_Y − MIN_Y)/dim_y.
 
 - **Newton**, `results.txt`: one line per x value, `dim_y` space-separated integers per
   line. Each value is the index (1…N) of the root reached, or `-1` if Newton's method did
