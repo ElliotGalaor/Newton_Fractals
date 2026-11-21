@@ -55,6 +55,12 @@ en.Desinstaller=Uninstall {#Nom}
 [Tasks]
 Name: "bureau"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+; Mise à jour : le contenu de _internal (Python, Qt, modules) et du moteur change d'une version
+; à l'autre ; on efface l'ancien pour ne pas mélanger les fichiers de deux versions
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\moteur"
+
 [Files]
 Source: "dist\NewtonFractals\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
@@ -68,6 +74,3 @@ Name: "{autodesktop}\{#Nom}"; Filename: "{app}\{#Exe}"; Tasks: bureau
 Filename: "{app}\{#Exe}"; Description: "{cm:LaunchProgram,{#Nom}}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\manuel\index.html"; Description: "{cm:Manuel}"; Flags: shellexec nowait postinstall skipifsilent unchecked
 
-[UninstallDelete]
-; fichiers écrits par Python dans le dossier d'installation (caches)
-Type: filesandordirs; Name: "{app}\_internal\__pycache__"

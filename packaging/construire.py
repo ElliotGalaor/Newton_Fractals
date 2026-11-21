@@ -68,20 +68,42 @@ def dll_importees(chemin):
     return noms
 
 
-def dependances(exe, dossiers):
-    """DLL non fournies par Windows dont dépend exe (récursivement), cherchées dans dossiers."""
+# DLL présentes dans System32 sur certaines machines seulement (redistribuables Visual C++…) :
+# elles doivent être livrées avec le moteur, jamais supposées fournies par Windows
+_REDISTRIBUABLES = ("vcruntime", "msvcp", "vcomp", "concrt", "vccorlib", "ucrtbased", "lib")
+
+
+def fournie_par_windows(nom):
+    cle = nom.lower()
+    if cle.startswith(("api-ms-", "ext-ms-")):
+        return True
+    if cle.startswith(_REDISTRIBUABLES):
+        return False
     systeme = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+    return os.path.isfile(os.path.join(systeme, nom))
+
+
+def dependances(exe, dossiers):
+    """DLL non fournies par Windows dont dépend exe (récursivement), cherchées dans dossiers
+    (dans cet ordre). Toutes doivent venir du même dossier : mélanger les DLL de deux
+    installations de MinGW donne un moteur qui plante au lancement."""
     trouvees, a_voir = {}, [exe]
     while a_voir:
         for nom in dll_importees(a_voir.pop()):
             cle = nom.lower()
-            if cle in trouvees or cle.startswith(("api-ms-", "ext-ms-")) or os.path.isfile(os.path.join(systeme, nom)):
+            if cle in trouvees or fournie_par_windows(nom):
                 continue
             chemin = next((os.path.join(d, nom) for d in dossiers if os.path.isfile(os.path.join(d, nom))), None)
             if chemin is None:
-                sys.exit(f"DLL introuvable : {nom} (dépendance de {os.path.basename(exe)})")
+                sys.exit(f"DLL introuvable : {nom} (dépendance de {os.path.basename(exe)}), "
+                         f"cherchée dans : {', '.join(dossiers)}")
             trouvees[cle] = chemin
             a_voir.append(chemin)
+    provenances = {os.path.dirname(os.path.abspath(c)).lower() for c in trouvees.values()}
+    if len(provenances) > 1:
+        sys.exit("Les DLL du moteur viennent de dossiers différents :\n  "
+                 + "\n  ".join(f"{os.path.basename(c)} : {c}" for c in trouvees.values())
+                 + "\nCopiez-les toutes à côté du moteur, depuis l'installation de MinGW qui l'a compilé.")
     return sorted(trouvees.values())
 
 
@@ -96,9 +118,10 @@ def preparer_moteur(moteur):
         etape(f"Compilation du moteur avec {gpp}")
         subprocess.run([gpp, "-std=c++14", "-O2", "-fopenmp", "-o", moteur,
                         *(os.path.join(SOURCES, f) for f in ("main.cpp", "Tableau.cpp", "CNum.cpp"))], check=True)
+    # Les DLL se cherchent à côté du moteur, puis avec le compilateur — jamais dans tout le PATH,
+    # qui peut contenir une autre installation de MinGW (celle de Git, par exemple)
     dossiers = [os.path.dirname(os.path.abspath(moteur))] + ([os.path.dirname(gpp)] if gpp else [])
-    dossiers += os.environ.get("PATH", "").split(os.pathsep)
-    return moteur, dependances(moteur, [d for d in dossiers if d])
+    return moteur, dependances(moteur, dossiers)
 
 
 # ---------- 2. PyInstaller ----------
@@ -139,7 +162,7 @@ def assembler(moteur, dlls):
     shutil.copy2(moteur, os.path.join(dossier_moteur, "moteur.exe"))
     for dll in dlls:
         shutil.copy2(dll, dossier_moteur)
-        print("  DLL du moteur :", os.path.basename(dll))
+        print(f"  DLL du moteur : {os.path.basename(dll)}  ({dll})")
     # le manuel (docs/manuel) utilise les captures de docs/images : même disposition une fois installé
     shutil.copytree(os.path.join(RACINE, "docs", "manuel"), os.path.join(APPLICATION, "manuel"), dirs_exist_ok=True)
     shutil.copytree(os.path.join(RACINE, "docs", "images"), os.path.join(APPLICATION, "images"), dirs_exist_ok=True)
