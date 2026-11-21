@@ -139,3 +139,60 @@ def test_cas_selle_et_equation_sans_solution():
 def test_asymptotes_coupees():
     x, y = ex.echantillonner_courbe(ex.lire("tan(x)", ("x",)), -5, 5, 10, {}, 1000)
     assert np.isnan(y).sum() >= 3      # une coupure par asymptote (x = ±π/2, ±3π/2)
+
+
+@pytest.mark.parametrize("texte, attendu", [("f(t) = t^2", X ** 2), ("f(u) = sin(u)", np.sin(X)),
+                                            ("g(s) = a s", 2 * X)])
+def test_variable_declaree_renommee_en_x(texte, attendu):
+    """« f(t) = t² » : t est la variable de la fonction, pas un paramètre."""
+    e = ex.lire(texte, ("x",), equations=True)
+    assert e.parametres == (["a"] if "a" in texte else [])
+    np.testing.assert_allclose(e.evaluer({"x": X, "a": 2.0}), attendu)
+
+
+def test_variables_declarees_dans_l_espace():
+    e = ex.lire("g(s, t) = s t", ("x", "y"), equations=True)
+    np.testing.assert_allclose(e.evaluer({"x": X, "y": 3.0}), 3 * X)
+    with pytest.raises(ValueError, match="doit dépendre de x"):
+        ex.lire("f(t, u) = t u", ("x",))
+
+
+@pytest.mark.parametrize("texte, variables", [("y = sin(x y)", ("x",)), ("y = x y", ("x",)),
+                                              ("z = x z + 1", ("x", "y"))])
+def test_lettre_des_deux_cotes_devient_une_equation(texte, variables):
+    e = ex.lire(texte, variables, equations=True)
+    assert e.implicite
+
+
+def test_formule_trop_longue_ou_trop_imbriquee():
+    with pytest.raises(ValueError, match="trop longue"):
+        ex.lire("+".join(["x"] * 3000), ("x",))
+    with pytest.raises(ValueError):
+        ex.lire("(" * 240 + "x" + ")" * 240, ("x",))
+    assert ex.lire("-" * 400 + "x", ("x",)).evaluer({"x": X}).shape == X.shape
+
+
+@pytest.mark.parametrize("texte, hauteur, poles", [("1/x + 1000", 12, [0]), ("exp(1/x)", 12, [0]),
+                                                   ("tan(x) + 50", 12, [-3 * np.pi / 2, -np.pi / 2,
+                                                                         np.pi / 2, 3 * np.pi / 2])])
+def test_asymptotes_coupees_sans_changement_de_signe(texte, hauteur, poles):
+    """Aucun segment tracé ne relie deux points de part et d'autre d'une asymptote, même loin de y = 0."""
+    x, y = ex.echantillonner_courbe(ex.lire(texte, ("x",)), -5, 5, hauteur, {}, 1000)   # (aucun point sur un pôle)
+    for pole in poles:
+        k = np.searchsorted(x, pole) - 1          # segment [x[k], x[k+1]] qui contient le pôle
+        assert np.isnan(y[k]) or np.isnan(y[k + 1])
+
+
+@pytest.mark.parametrize("texte", ["sin(x)", "x^3", "100 sin(50 x)", "atan(1000 x)", "sqrt(4 - x^2)"])
+def test_fonctions_continues_jamais_coupees(texte):
+    e = ex.lire(texte, ("x",))
+    x, y = ex.echantillonner_courbe(e, -10, 10, 12, {})
+    assert np.isnan(y).sum() == np.isnan(e.evaluer({"x": x})).sum()
+
+
+@pytest.mark.parametrize("texte, zeros", [("tan(x) = 0", [-np.pi, 0, np.pi]), ("1/x = 0", []),
+                                          ("x/(x^2 - 4) = 0", [0])])
+def test_poles_ne_sont_pas_des_courbes(texte, zeros):
+    s = ex.segments_implicites(ex.lire(texte, ("x",), equations=True), -6, 6, -4, 4, 480, 320, {})
+    trouves = np.unique(np.round(s[..., 0], 1))
+    np.testing.assert_allclose(trouves, np.round(zeros, 1))

@@ -32,7 +32,7 @@ _JETON = re.compile(r"\s*(?:(\d+\.?\d*(?:[eE][+-]?\d+)?|\.\d+(?:[eE][+-]?\d+)?)"
                     r"|(\*\*|[-+*/^(),]))")                                           # opérateur
 _REMPLACEMENTS = {"π": "pi", "²": "^2", "³": "^3", "×": "*", "·": "*", "−": "-", "÷": "/"}
 # « f(x) = » ou « y = » (plan), « f(x, y) = » ou « z = » (espace) : définition d'une fonction
-_PREFIXES = {lettre: re.compile(r"^\s*(?:([A-Za-z]\w*)\s*\(\s*[A-Za-z\s,]*\)|(" + lettre + r"))\s*=\s*")
+_PREFIXES = {lettre: re.compile(r"^\s*(?:([A-Za-z]\w*)\s*\(([A-Za-z\s,]*)\)|(" + lettre + r"))\s*=\s*")
              for lettre in "yz"}
 
 EXEMPLES_2D = ["sin(x)", "x^2 + y^2 = 4", "x^2 - 3", "x^2/9 + y^2/4 = 1", "exp(-x^2)", "y^2 = x^3 - x",
@@ -58,9 +58,13 @@ class Expression:
     def __init__(self, texte, variables, equations=False):
         self.texte = texte
         dans_le_plan = len(variables) == 1
-        self.nom, corps = _separer_prefixe(texte, "y" if dans_le_plan else "z")
+        lettre = "y" if dans_le_plan else "z"
+        self.nom, corps, declarees = _separer_prefixe(texte, lettre)
         self.corps = " ".join(corps.split())
         self.implicite = "=" in corps
+        if equations and not self.implicite and declarees == [lettre] and _contient_nom(corps, lettre):
+            # « y = sin(x y) » : y figure des deux côtés, c'est une équation (comme dans GeoGebra)
+            self.implicite, corps = True, f"{lettre} = {corps}"
         if self.implicite:
             if not equations:
                 raise ValueError("un seul signe = est permis, au début (ex. z = …)")
@@ -75,7 +79,10 @@ class Expression:
             self.arbre, self.parametres = _analyser(f"({gauche}) - ({droite})", self.variables)
         else:
             self.variables = tuple(variables)
-            self.arbre, self.parametres = _analyser(self.corps, self.variables, equations)
+            if declarees in (None, [lettre]) or declarees == list(self.variables):
+                self.arbre, self.parametres = _analyser(self.corps, self.variables, equations)
+            else:
+                self.arbre, self.parametres = _renommer_variables(self.corps, declarees, self.variables, self.nom)
 
     def evaluer(self, valeurs):
         with np.errstate(all="ignore"):
@@ -87,14 +94,41 @@ class Expression:
 
 
 def _separer_prefixe(texte, lettre="y"):
-    """« f(x) = … » ou « y = … » (lettre « z » dans l'espace) → (nom ou None, reste)."""
+    """« f(x) = … » ou « y = … » (lettre « z » dans l'espace) → (nom ou None, reste, variables déclarées).
+    Les variables déclarées sont [lettre] pour « y = … », la liste entre parenthèses pour « f(t) = … »,
+    None s'il n'y a pas de préfixe."""
     t = texte
     for a, b in _REMPLACEMENTS.items():
         t = t.replace(a, b)
     m = _PREFIXES[lettre].match(t)
     if not m or m.group(1) in FONCTIONS:   # « sin(x) = cos(y) » est une équation, pas une définition
-        return None, t
-    return m.group(1), t[m.end():]
+        return None, t, None
+    if m.group(3):
+        return None, t[m.end():], [lettre]
+    return m.group(1), t[m.end():], [v.strip() for v in m.group(2).split(",") if v.strip()]
+
+
+def _contient_nom(texte, nom):
+    try:
+        return ("nom", nom) in _jetons(texte)
+    except ValueError:
+        return False
+
+
+def _renommer_variables(corps, declarees, variables, nom):
+    """« f(t) = t² » : la variable déclarée t est renommée x (x et y dans l'espace)."""
+    attendu = ", ".join(variables)
+    if len(declarees) != len(variables) or len(set(declarees)) != len(declarees)             or any(len(v) != 1 or v in CONSTANTES for v in declarees):
+        raise ValueError(f"la fonction doit dépendre de {attendu} : {nom}({attendu}) = …")
+    arbre, parametres = _analyser(corps, tuple(declarees))
+    for v in variables:
+        if v in parametres and v not in declarees:
+            raise ValueError(f"{v} ne peut pas être un paramètre ici : écris {nom}({attendu}) = …")
+    correspondance = dict(zip(declarees, variables, strict=True))
+    for noeud in ast.walk(arbre):
+        if isinstance(noeud, ast.Name) and noeud.id in correspondance:
+            noeud.id = correspondance[noeud.id]
+    return arbre, parametres
 
 
 def _jetons(texte):
@@ -134,9 +168,22 @@ def _jetons(texte):
     return jetons
 
 
+LONGUEUR_MAX = 500   # caractères par formule
+
+
 def _analyser(texte, variables, equations=False):
+    try:
+        return _analyser_sans_garde(texte, variables, equations)
+    except (RecursionError, MemoryError):
+        # (une formule très imbriquée dépasse la pile de l'analyseur de Python)
+        raise ValueError("formule trop complexe : simplifie-la ou découpe-la en plusieurs lignes") from None
+
+
+def _analyser_sans_garde(texte, variables, equations):
     if not texte.strip():
         raise ValueError("rien n'est écrit")
+    if len(texte) > LONGUEUR_MAX:
+        raise ValueError(f"formule trop longue ({LONGUEUR_MAX} caractères au maximum)")
     jetons = _jetons(texte)
     morceaux = []
     for k, (genre, v) in enumerate(jetons):
@@ -224,6 +271,26 @@ def lire(texte, variables, equations=False):
     return Expression(texte, variables, equations)
 
 
+def vrai_zero(expression, valeurs_parametres, debut, fin, v0, v1, etapes=12):
+    """F change de signe entre debut et fin (dictionnaires de coordonnées, tableaux) : vrai si
+    c'est un zéro, faux si c'est un pôle (ex. tan(x) en π/2). On resserre l'intervalle par
+    dichotomie en gardant le changement de signe : autour d'un zéro |F| devient minuscule,
+    autour d'un pôle elle grandit (ou F devient indéfinie)."""
+    debut = {v: np.array(c, dtype=float) for v, c in debut.items()}
+    fin = {v: np.array(c, dtype=float) for v, c in fin.items()}
+    v0, v1 = np.array(v0, dtype=float), np.array(v1, dtype=float)
+    depart = np.maximum(np.abs(v0), np.abs(v1))
+    for _ in range(etapes):
+        milieu = {v: (debut[v] + fin[v]) / 2 for v in debut}
+        vm = expression.evaluer(dict(valeurs_parametres, **milieu))
+        cote_debut = (vm > 0) == (v0 > 0)                  # le changement de signe est dans [milieu, fin]
+        for v in debut:
+            debut[v] = np.where(cote_debut, milieu[v], debut[v])
+            fin[v] = np.where(cote_debut, fin[v], milieu[v])
+        v0, v1 = np.where(cote_debut, vm, v0), np.where(cote_debut, v1, vm)
+    return np.maximum(np.abs(v0), np.abs(v1)) <= depart   # (NaN → faux)
+
+
 def segments_implicites(expression, x0, x1, y0, y1, nx, ny, valeurs_parametres):
     """Courbe F(x, y) = 0 sur le rectangle donné, par la méthode des « carrés marchants » :
     on évalue F sur une grille nx × ny ; dans chaque case où F change de signe entre deux
@@ -264,6 +331,17 @@ def segments_implicites(expression, x0, x1, y0, y1, nx, ny, valeurs_parametres):
         np.stack([interp(d, c, xg, xd), yh], axis=-1),   # haut
         np.stack([xg, interp(a, d, yb, yh)], axis=-1),   # gauche
     ])                                                   # (4, cases, 2)
+    # Un côté « coupé » à travers un pôle (ex. tan(x) = 0 en x = π/2) n'est pas la courbe
+    k = np.nonzero(croise.any(axis=0))[0]
+    if k.size:
+        extremites = [((xg, yb), (xd, yb), a, b), ((xd, yb), (xd, yh), b, c),
+                      ((xg, yh), (xd, yh), d, c), ((xg, yb), (xg, yh), a, d)]
+        for cote, ((x_0, y_0), (x_1, y_1), v0, v1) in enumerate(extremites):
+            sur_cote = k[croise[cote, k]]
+            if sur_cote.size:
+                croise[cote, sur_cote] = vrai_zero(
+                    expression, valeurs_parametres, {"x": x_0[sur_cote], "y": y_0[sur_cote]},
+                    {"x": x_1[sur_cote], "y": y_1[sur_cote]}, v0[sur_cote], v1[sur_cote])
     nombre = croise.sum(axis=0)
     segments = []
 
@@ -287,15 +365,32 @@ def segments_implicites(expression, x0, x1, y0, y1, nx, ny, valeurs_parametres):
 
 
 def echantillonner_courbe(expression, x0, x1, hauteur_vue, valeurs_parametres, n=2000):
-    """Points (x, y) d'une courbe y = f(x) sur [x0, x1]. Les sauts verticaux plus grands que
-    la hauteur de la vue (asymptotes, comme pour tan ou 1/x) sont coupés par un NaN."""
+    """Points (x, y) d'une courbe y = f(x) sur [x0, x1]. Les discontinuités (asymptotes de tan
+    ou de 1/x, sauts de floor…) sont coupées par un NaN au lieu d'être reliées par un trait."""
     x = np.linspace(x0, x1, n)
-    valeurs = dict(valeurs_parametres, x=x)
-    y = expression.evaluer(valeurs)
-    saut = np.abs(np.diff(y)) > 2 * max(hauteur_vue, 1e-300)
-    changement = np.sign(y[:-1]) != np.sign(y[1:])
-    coupures = np.where(saut & changement)[0]
-    if coupures.size:
-        y = y.copy()
-        y[coupures] = np.nan   # on coupe la ligne au point avant le saut
+    y = expression.evaluer(dict(valeurs_parametres, x=x))
+    seuil = 0.02 * max(hauteur_vue, 1e-300)
+    candidats = np.nonzero(np.abs(np.diff(y)) > seuil)[0]
+    if candidats.size:
+        coupures = candidats[_discontinu(expression, valeurs_parametres, x[candidats], x[candidats + 1],
+                                         y[candidats], y[candidats + 1], seuil)]
+        if coupures.size:
+            y = y.copy()
+            y[coupures] = np.nan   # on coupe la ligne au point avant le saut
     return x, y
+
+
+def _discontinu(expression, valeurs_parametres, xa, xb, ya, yb, seuil, etapes=24):
+    """Pour chaque intervalle [xa, xb] où f varie beaucoup : vrai si f y est discontinue.
+    On coupe l'intervalle en deux, encore et encore, en gardant la moitié où f varie le plus :
+    pour une fonction continue, la variation devient minuscule ; pour une asymptote ou un saut,
+    elle reste grande (ou f devient indéfinie)."""
+    xa, xb, ya, yb = (np.array(v, dtype=float) for v in (xa, xb, ya, yb))
+    for _ in range(etapes):
+        xm = (xa + xb) / 2
+        ym = expression.evaluer(dict(valeurs_parametres, x=xm))
+        with np.errstate(invalid="ignore"):
+            gauche = np.nan_to_num(np.abs(ym - ya), nan=np.inf) >= np.nan_to_num(np.abs(yb - ym), nan=np.inf)
+        xb, yb = np.where(gauche, xm, xb), np.where(gauche, ym, yb)
+        xa, ya = np.where(gauche, xa, xm), np.where(gauche, ya, ym)
+    return ~(np.abs(yb - ya) <= seuil)   # (NaN : indéfinie dans l'intervalle → coupée)

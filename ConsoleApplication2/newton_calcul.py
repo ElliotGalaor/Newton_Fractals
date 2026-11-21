@@ -6,6 +6,7 @@ Utilisé par l'interface Qt (NewtonFractalsDrawing.py).
 """
 import ast
 import json
+import math
 import os
 import re
 import shutil
@@ -172,28 +173,79 @@ def _vers_polynome(texte, contexte="Polynôme"):
         raise ValueError(str(e).replace("Polynôme", contexte, 1)) from None
 
 
+def _arrondir(v):
+    """Efface les parties réelles / imaginaires négligeables (bruit de calcul)."""
+    v = complex(v)
+    if abs(v.imag) <= 1e-12 * max(1, abs(v)):
+        v = complex(v.real, 0)
+    if abs(v.real) <= 1e-12 * max(1, abs(v)):
+        v = complex(0, v.imag)
+    return v
+
+
+def _trier(groupes):
+    return sorted(groupes, key=lambda vm: (round(vm[0].real, 9), round(vm[0].imag, 9)))
+
+
 def grouper_racines(valeurs):
-    """Regroupe les valeurs presque égales (racine multiple) → [(valeur, multiplicité)], triées.
-    np.roots éparpille une racine multiple (≈1e-5 pour une racine triple), d'où la tolérance."""
-    groupes = []
+    """Racines données par l'utilisateur → [(valeur, multiplicité)], triées.
+    Seules les valeurs égales sont regroupées : c'est l'utilisateur qui choisit les multiplicités."""
+    groupes = {}
     for r in valeurs:
         r = complex(r)
-        for g in groupes:
-            if abs(g[0] - r) <= 2e-4 * max(1, abs(r)):
-                g.append(r)
-                break
-        else:
-            groupes.append([r])
+        groupes[r] = groupes.get(r, 0) + 1
+    return _trier([(_arrondir(v), m) for v, m in groupes.items()])
+
+
+# Précision relative avec laquelle np.roots retrouve les racines : une racine de multiplicité m
+# est éparpillée en m valeurs à une distance de l'ordre de PRECISION^(1/m) × (taille des racines)
+PRECISION_RACINES = 1e-10
+
+
+def racines_multiples(coefs):
+    """Racines distinctes d'un polynôme avec leur multiplicité → [(valeur, multiplicité)], triées.
+
+    np.roots éparpille une racine de multiplicité m autour de la vraie valeur, d'autant plus que m
+    est grand (≈1e-5 pour m = 3, ≈1e-3 pour m = 5). On regroupe donc les racines qui tiennent dans
+    un disque de diamètre PRECISION^(1/m) × (plus grande racine), en commençant par les plus gros
+    groupes, puis on affine chaque groupe par la méthode de Newton sur p^(m-1), dont la racine
+    multiple est une racine simple. Des racines distinctes mais proches restent séparées : la
+    tolérance est relative à la taille des racines, pas absolue."""
+    coefs = np.trim_zeros(np.asarray(coefs, dtype=complex), "f")
+    restantes = [complex(r) for r in np.roots(coefs)]
+    echelle = max([abs(r) for r in restantes] + [1e-300])
+    groupes = []
+    while restantes:
+        meilleur = [restantes[0]]
+        for r in restantes:
+            proches = sorted(restantes, key=lambda q, r=r: abs(q - r))
+            for m in range(len(proches), len(meilleur), -1):
+                groupe = proches[:m]
+                diametre = max(abs(a - b) for a in groupe for b in groupe)
+                if diametre <= PRECISION_RACINES ** (1 / m) * echelle:
+                    meilleur = groupe
+                    break
+        for r in meilleur:
+            restantes.remove(r)
+        groupes.append(meilleur)
     resultat = []
     for g in groupes:
+        m = len(g)
         v = complex(np.mean(g))
-        if abs(v.imag) <= 1e-12 * max(1, abs(v)):
-            v = complex(v.real, 0)
-        if abs(v.real) <= 1e-12 * max(1, abs(v)):
-            v = complex(0, v.imag)
-        resultat.append((v, len(g)))
-    resultat.sort(key=lambda vm: (round(vm[0].real, 9), round(vm[0].imag, 9)))
-    return resultat
+        if m > 1:
+            derivee = np.polyder(coefs, m - 1)
+            derivee2 = np.polyder(derivee)
+            rayon = max(abs(r - v) for r in g) + 1e-300
+            for _ in range(8):
+                d2 = np.polyval(derivee2, v)
+                if d2 == 0:
+                    break
+                pas = np.polyval(derivee, v) / d2
+                if not np.isfinite(pas) or abs(pas) > rayon:
+                    break
+                v -= pas
+        resultat.append((_arrondir(v), m))
+    return _trier(resultat)
 
 
 def nettoyer(coefs, tolerance=1e-13):
@@ -218,7 +270,9 @@ def lire_polynome(texte):
     if degre > DEGRE_MAX:
         raise ValueError(f"Degré {degre} trop grand ({DEGRE_MAX} au maximum)")
     coefs = np.asarray(poly.coef, dtype=complex)[::-1]
-    return coefs, [v for v, _ in grouper_racines(np.roots(coefs))]
+    if not np.all(np.isfinite(coefs)):
+        raise ValueError("Polynôme : coefficient trop grand")
+    return coefs, [v for v, _ in racines_multiples(coefs)]
 
 
 def lire_racines(texte):
@@ -238,6 +292,8 @@ def lire_racines(texte):
         if valeur.degree() > 0:
             raise ValueError(f"Racine {k} : z n'a pas sa place ici, il faut un nombre")
         racines.append(complex(valeur.coef[0]))
+        if not np.isfinite(racines[-1]):
+            raise ValueError(f"Racine {k} : nombre trop grand")
     if len(racines) > DEGRE_MAX:
         raise ValueError(f"{len(racines)} racines : {DEGRE_MAX} au maximum")
     return racines
@@ -251,7 +307,7 @@ def depuis_racines(racines):
 def texte_racines(coefs):
     """Racines d'un polynôme, écrites pour le champ « Racines » (multiplicités répétées)."""
     morceaux = []
-    for v, m in grouper_racines(np.roots(coefs)):
+    for v, m in racines_multiples(coefs):
         morceaux += [texte_complexe(v, 10)] * m
     return " ; ".join(morceaux)
 
@@ -348,14 +404,18 @@ def arguments_calcul(p, fichier_binaire):
 def verifier_parametres(p):
     """Vérifie les valeurs numériques (fractale de Newton) ; lève ValueError avec un message clair."""
     verifier_fenetre(p)
-    if p["eps"] <= 0:
-        raise ValueError("La précision doit être positive")
+    if not (math.isfinite(p["eps"]) and 0 < p["eps"] < 1):
+        raise ValueError("La précision (eps) doit être comprise entre 0 et 1")
     if not 1 <= p["iterations"] <= 1_000_000:
         raise ValueError("Itérations : entre 1 et 1 000 000")
 
 
 def verifier_fenetre(p):
     """Vérifie la taille de l'image et la zone du plan complexe (communes à toutes les fractales)."""
+    if not all(math.isfinite(p[c]) for c in ("largeur", "hauteur", "min_x", "max_x", "min_y", "max_y")):
+        raise ValueError("Les bornes et la taille doivent être des nombres finis")
+    if max(abs(p[c]) for c in ("min_x", "max_x", "min_y", "max_y")) > 1e100:
+        raise ValueError("Bornes trop grandes (1e100 au maximum)")
     if not (1 <= p["largeur"] <= 20000 and 1 <= p["hauteur"] <= 20000):
         raise ValueError("La taille doit être entre 1 et 20000 pixels")
     if p["largeur"] * p["hauteur"] > 50_000_000:
@@ -590,8 +650,11 @@ def lire_nombres(textes, champs=None):
     for cle, libelle, type_ in champs or CHAMPS:
         texte = textes[cle].strip().replace(",", ".")
         try:
-            p[cle] = type_(float(texte)) if type_ is int else float(texte)
-        except ValueError:
+            valeur = float(texte)
+            if not math.isfinite(valeur):
+                raise ValueError
+            p[cle] = int(valeur) if type_ is int else valeur
+        except (ValueError, OverflowError):
             raise ValueError(f"« {libelle} » : nombre invalide") from None
     return p
 

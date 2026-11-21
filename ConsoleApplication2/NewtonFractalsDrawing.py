@@ -229,12 +229,37 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
 
     def ouvrir(self, nom):
         if nom not in self.vues:
-            self.vues[nom] = self.creer_vue(nom)
+            try:
+                self.vues[nom] = self.creer_vue(nom)
+            except Exception as e:   # (ex. état sauvegardé illisible : on propose de repartir de zéro)
+                if not self.reinitialiser_apres_erreur(nom, e):
+                    return
+                self.vues[nom] = self.creer_vue(nom)
             self.pile.addWidget(self.vues[nom])
         vue = self.vues[nom]
         self.pile.setCurrentWidget(vue)
         self.setWindowTitle(f"{vue.NOM} — {TITRE}")
         self.statusBar().showMessage("Survole l'image pour voir les coordonnées et la valeur calculée.")
+
+    def reinitialiser_apres_erreur(self, nom, erreur):
+        """La page n'a pas pu être créée : propose d'effacer ses réglages sauvegardés."""
+        import vue_graphe2d
+        import vue_surfaces3d
+        fichiers = {"graphe2d": [vue_graphe2d.FICHIER_ETAT], "surfaces3d": [vue_surfaces3d.FICHIER_ETAT],
+                    "newton": [nc.FICHIER_PARAMETRES], "mandelbrot": [mc.FICHIER_PARAMETRES]}[nom]
+        reponse = QtWidgets.QMessageBox.warning(
+            self, NOM_LOGICIEL,
+            f"La page n'a pas pu s'ouvrir :\n{erreur!r}\n\n"
+            "Effacer ses réglages enregistrés et réessayer ?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No)
+        if reponse != QtWidgets.QMessageBox.StandardButton.Yes:
+            return False
+        for chemin in fichiers:
+            try:
+                os.remove(chemin)
+            except OSError:
+                pass
+        return True
 
     def aller_accueil(self):
         self.pile.setCurrentWidget(self.accueil)
@@ -308,9 +333,15 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
 
     if args.enregistrer:
-        p, indices = nc.preparer(args)
-        if indices is None:
+        # Le fichier demandé (--fichier) d'abord ; à défaut, le dernier calcul de l'interface
+        if os.path.isfile(args.fichier):
             indices = nc.lire_fichier_resultat(args.fichier)
+        elif args.fichier != nc.FICHIER_RESULTATS:
+            sys.exit(f"Fichier introuvable : {args.fichier}")
+        else:
+            indices = nc.preparer(args)[1]
+        if indices is None:
+            sys.exit(f"Aucun résultat à enregistrer : {args.fichier} est absent ou illisible")
         if not sauver_png_rgb(nc.table_couleurs()[np.clip(indices, 0, 255)], args.enregistrer):
             sys.exit(f"Enregistrement impossible : {args.enregistrer}")
         print(f"Image enregistree : {args.enregistrer}")

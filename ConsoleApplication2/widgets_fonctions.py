@@ -1,9 +1,11 @@
 """Composants partagés par les graphes 2D et les surfaces 3D : liste de fonctions
 modifiable (à la façon de la fenêtre Algèbre de GeoGebra) et curseurs de paramètres."""
 import json
+import math
+import os
 import string
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 import expressions as ex
 from interface_commune import BORDURE, ERREUR, etiquette
@@ -13,18 +15,44 @@ COULEURS_COURBES = ["#4cc9f0", "#f72585", "#ffd166", "#06d6a0", "#9d7dff", "#ff8
 NOMS_AUTO = [c for c in "fghpqrsuvw"]
 
 
-def charger_etat(chemin):
+def charger_etat(chemin, booleens=None):
+    """État sauvegardé d'une page (dictionnaire), vérifié champ par champ : une valeur invalide
+    (fichier modifié à la main, version différente…) est ignorée plutôt que d'empêcher la page
+    de s'ouvrir. booleens : {clé: valeur par défaut} des cases à cocher."""
     try:
         with open(chemin, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return None
+            etat = json.load(f)
+    except (OSError, ValueError, RecursionError):
+        return {}
+    if not isinstance(etat, dict):
+        return {}
+    propre = {k: v for k, v in etat.items() if k not in ("fonctions", "parametres")}
+    if isinstance(etat.get("fonctions"), list):
+        fonctions = []
+        for e in etat["fonctions"]:
+            if not isinstance(e, dict) or not isinstance(e.get("texte"), str) or len(e["texte"]) > ex.LONGUEUR_MAX:
+                continue
+            f = {"texte": e["texte"], "visible": e.get("visible", True) is not False}
+            if isinstance(e.get("couleur"), str) and QtGui.QColor(e["couleur"]).isValid():
+                f["couleur"] = e["couleur"]
+            fonctions.append(f)
+        propre["fonctions"] = fonctions
+    if isinstance(etat.get("parametres"), dict):
+        propre["parametres"] = {
+            nom: min(max(float(v), Curseurs.MIN), Curseurs.MAX) for nom, v in etat["parametres"].items()
+            if isinstance(nom, str) and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)}
+    for cle, defaut in (booleens or {}).items():
+        propre[cle] = etat[cle] if isinstance(etat.get(cle), bool) else defaut
+    return propre
 
 
 def sauver_etat(chemin, etat):
+    """Écriture atomique : un fichier temporaire remplace l'ancien, qui reste intact en cas d'échec."""
+    temporaire = chemin + ".tmp"
     try:
-        with open(chemin, "w", encoding="utf-8") as f:
+        with open(temporaire, "w", encoding="utf-8") as f:
             json.dump(etat, f, indent=2, ensure_ascii=False)
+        os.replace(temporaire, chemin)
     except OSError:
         pass
 
@@ -54,6 +82,7 @@ class LigneFonction(QtWidgets.QWidget):
         self.case.setToolTip("Afficher / masquer")
         self.case.toggled.connect(lambda _: self.modifiee.emit())
         self.champ = QtWidgets.QLineEdit(texte)
+        self.champ.setMaxLength(ex.LONGUEUR_MAX)
         self.champ.setCursorPosition(0)
         self.champ.textChanged.connect(self.texte_change)
         supprimer = QtWidgets.QPushButton("×")
@@ -88,7 +117,7 @@ class LigneFonction(QtWidgets.QWidget):
             self.expression = ex.lire(self.champ.text(), self.variables, self.equations)
             self.erreur.hide()
             self.champ.setStyleSheet("")
-        except ValueError as e:
+        except Exception as e:   # (toute erreur : l'ancienne courbe ne doit pas rester affichée)
             self.expression = None
             vide = not self.champ.text().strip()
             self.erreur.setText("" if vide else str(e))
@@ -122,6 +151,7 @@ class ListeFonctions(QtWidgets.QWidget):
         v.addLayout(self.zone_lignes)
         ajout = QtWidgets.QHBoxLayout()
         self.champ_nouveau = QtWidgets.QLineEdit()
+        self.champ_nouveau.setMaxLength(ex.LONGUEUR_MAX)
         self.champ_nouveau.setPlaceholderText("Nouvelle fonction…  (Entrée pour ajouter)")
         self.champ_nouveau.returnPressed.connect(self.ajouter_saisie)
         exemple = QtWidgets.QPushButton("Exemple ▸")
@@ -197,6 +227,7 @@ class Curseurs(QtWidgets.QWidget):
     Le bouton ▶ anime le paramètre en le faisant aller et venir entre ses bornes."""
     changes = QtCore.Signal()
     PAS = 100    # le curseur travaille en centièmes
+    MIN, MAX = -10, 10
 
     def __init__(self, valeurs_initiales=None):
         super().__init__()
@@ -224,14 +255,15 @@ class Curseurs(QtWidgets.QWidget):
         self.setVisible(bool(self.lignes))
 
     def creer(self, nom):
-        valeur = float(self.valeurs.get(nom, 1.0))
+        valeur = min(max(float(self.valeurs.get(nom, 1.0)), self.MIN), self.MAX)
+        self.valeurs[nom] = valeur
         conteneur = QtWidgets.QWidget()
         ligne = QtWidgets.QHBoxLayout(conteneur)
         ligne.setContentsMargins(0, 0, 0, 0)
         texte = QtWidgets.QLabel()
         texte.setMinimumWidth(78)
         curseur = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        curseur.setRange(-10 * self.PAS, 10 * self.PAS)
+        curseur.setRange(self.MIN * self.PAS, self.MAX * self.PAS)
         curseur.setValue(int(round(valeur * self.PAS)))
         lecture = QtWidgets.QPushButton("▶")
         lecture.setFixedSize(30, 26)

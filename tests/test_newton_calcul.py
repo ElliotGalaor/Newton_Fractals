@@ -107,3 +107,44 @@ def test_verification_des_parametres():
                                  ("iterations", 0, "Itérations")):
         with pytest.raises(ValueError, match=message):
             nc.verifier_parametres(dict(p, **{cle: valeur}))
+
+
+@pytest.mark.parametrize("texte, attendu", [("(z-1)^5", [(1, 5)]), ("(z-2)^4(z+1)", [(-1, 1), (2, 4)]),
+                                            ("(z-1-2i)^4(z+3)^2", [(-3, 2), (1 + 2j, 4)]),
+                                            ("z^2(z-1000)", [(0, 2), (1000, 1)]),
+                                            ("1000(z-0.001)^3(z-5)", [(0.001, 3), (5, 1)])])
+def test_racines_de_grande_multiplicite(texte, attendu):
+    """np.roots éparpille une racine d'ordre m d'environ ε^(1/m) : elle doit rester une seule racine."""
+    trouve = nc.racines_multiples(nc.lire_polynome(texte)[0])
+    assert [m for _, m in trouve] == [m for _, m in attendu]
+    np.testing.assert_allclose([v for v, _ in trouve], [v for v, _ in attendu], atol=1e-6)
+    assert nc.texte_racines(nc.lire_polynome("(z-1)^5")[0]) == "1 ; 1 ; 1 ; 1 ; 1"
+
+
+@pytest.mark.parametrize("texte, n", [("z^2 - 1e-8", 2), ("(z-1)(z-1.0001)", 2), ("z^20 - 1", 20)])
+def test_racines_proches_mais_distinctes(texte, n):
+    assert len(nc.lire_polynome(texte)[1]) == n
+
+
+def test_racines_saisies_jamais_fusionnees():
+    """En mode Racines, seules les valeurs égales sont regroupées : l'utilisateur choisit les multiplicités."""
+    assert len(nc.depuis_racines(nc.lire_racines("1 ; 1.0001"))[1]) == 2
+    assert len(nc.depuis_racines(nc.lire_racines("1e-5 ; -1e-5"))[1]) == 2
+    assert nc.depuis_racines(nc.lire_racines("1 ; 1 ; 2"))[1] == [1, 2]
+
+
+@pytest.mark.parametrize("cle, texte", [("min_x", "nan"), ("max_x", "inf"), ("eps", "nan"), ("largeur", "1e400"),
+                                        ("eps", "2")])
+def test_valeurs_non_finies_refusees(cle, texte):
+    textes = nc.textes_champs(dict(nc.DEFAUTS))
+    textes[cle] = texte
+    with pytest.raises(ValueError):
+        nc.verifier_parametres(nc.lire_nombres(textes))
+
+
+@pytest.mark.parametrize("texte, message", [("1e400 z + 1", "trop grand")])
+def test_coefficient_infini_refuse(texte, message):
+    with pytest.raises(ValueError, match=message):
+        nc.lire_polynome(texte)
+    with pytest.raises(ValueError, match="trop grand"):
+        nc.lire_racines("1e400 ; 1")
