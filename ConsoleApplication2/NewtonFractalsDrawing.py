@@ -33,7 +33,7 @@ import shutil
 import subprocess
 import sys
 
-if not os.environ.get("NEWTON_FRACTALS_RELANCE"):   # (une seule fois, même si le script se relance)
+if not os.environ.get("NEWTON_FRACTALS_RELANCE") and not getattr(sys, "frozen", False):   # (une seule fois)
     print("Ouverture de l'interface...", flush=True)   # (le chargement de Qt peut prendre quelques secondes)
 
 import numpy as np
@@ -77,16 +77,20 @@ def _relancer_avec_un_autre_python(seulement_officiel=False):
             sys.exit(subprocess.call([c, os.path.abspath(__file__)] + sys.argv[1:], env=env))
 
 
+# Application empaquetée (NewtonFractals.exe) : Python et Qt sont embarqués, rien à relancer
+EMPAQUETE = bool(getattr(sys, "frozen", False))
+
 # PySide6 de MSYS2 : on préfère, s'il existe, un Python avec le PySide6 officiel (bien plus rapide)
-_spec = importlib.util.find_spec("PySide6")
+_spec = None if EMPAQUETE else importlib.util.find_spec("PySide6")
 if _spec is not None and _vient_de_msys2(_spec.origin):
     _relancer_avec_un_autre_python(seulement_officiel=True)
 
 try:
     import pyqtgraph  # noqa: F401  (vérifie que pyqtgraph se charge avec ce Qt)
-    from PySide6 import QtGui, QtWidgets
+    from PySide6 import QtCore, QtGui, QtWidgets
 except ImportError as erreur_qt:
-    _relancer_avec_un_autre_python()
+    if not EMPAQUETE:
+        _relancer_avec_un_autre_python()
     sys.exit(f"Impossible de charger Qt avec ce Python ({sys.executable}) :\n  {erreur_qt}\n\n"
              "Installe PySide6 et pyqtgraph dans ton Python Windows (leurs DLL sont signées) :\n"
              '  & "$env:LOCALAPPDATA\\Python\\bin\\python.exe" -m pip install pyside6 pyqtgraph PyOpenGL\n'
@@ -102,6 +106,24 @@ from vue_newton import VueNewton
 from vue_surfaces3d import VueSurfaces3D
 
 TITRE = "Visualisations mathématiques"
+NOM_LOGICIEL = "Newton Fractals"
+VERSION = "1.1.0"   # (le workflow de release vérifie qu'elle correspond au tag vX.Y.Z)
+
+
+ICI = os.path.dirname(os.path.abspath(__file__))   # (dans _internal une fois empaqueté)
+
+
+def chemin_icone():
+    return os.path.join(ICI, "icone.png")
+
+
+def chemin_manuel():
+    """Manuel utilisateur : installé avec le logiciel, ou dans docs/manuel en développement."""
+    for chemin in (os.path.join(nc.DOSSIER_APPLICATION, "manuel", "index.html"),
+                   os.path.join(os.path.dirname(ICI), "docs", "manuel", "index.html")):
+        if os.path.isfile(chemin):
+            return chemin
+    return None
 
 
 def preparer_mandelbrot():
@@ -147,7 +169,40 @@ class FenetrePrincipale(QtWidgets.QMainWindow):
         quitter.setShortcut(QtGui.QKeySequence("Ctrl+Q"))
         quitter.triggered.connect(self.close)
         menu.addAction(quitter)
+
+        aide = self.menuBar().addMenu("&Aide")
+        manuel = QtGui.QAction("Manuel d'utilisation", self)
+        manuel.setShortcut(QtGui.QKeySequence("F1"))
+        manuel.triggered.connect(self.ouvrir_manuel)
+        aide.addAction(manuel)
+        donnees = QtGui.QAction("Ouvrir le dossier des données", self)
+        donnees.triggered.connect(lambda: QtGui.QDesktopServices.openUrl(
+            QtCore.QUrl.fromLocalFile(nc.DOSSIER_DONNEES)))
+        aide.addAction(donnees)
+        aide.addSeparator()
+        a_propos = QtGui.QAction(f"À propos de {NOM_LOGICIEL}", self)
+        a_propos.triggered.connect(self.a_propos)
+        aide.addAction(a_propos)
         self.aller_accueil()
+
+    def ouvrir_manuel(self):
+        chemin = chemin_manuel()
+        if chemin:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(chemin))
+        else:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://github.com/ElliotGalaor/Newton_Fractals#readme"))
+
+    def a_propos(self):
+        moteur = self.executable or "introuvable"
+        QtWidgets.QMessageBox.about(
+            self, f"À propos de {NOM_LOGICIEL}",
+            f"<h3>{NOM_LOGICIEL} {VERSION}</h3>"
+            "<p>Visualisations mathématiques : fractales de Newton, ensemble de Mandelbrot, "
+            "graphes 2D et surfaces 3D.</p>"
+            "<p>Moteur de calcul C++ (OpenMP), interface Qt (PySide6, pyqtgraph).</p>"
+            f"<p><small>Moteur : {moteur}<br>Données : {nc.DOSSIER_DONNEES}</small></p>"
+            '<p><a href="https://github.com/ElliotGalaor/Newton_Fractals">'
+            "github.com/ElliotGalaor/Newton_Fractals</a></p>")
 
     def preparer_opengl(self):
         """Widget OpenGL invisible (1 pixel), créé avant le premier affichage de la fenêtre.
@@ -201,7 +256,51 @@ def lire_arguments():
     p.add_argument("--exe", help="chemin du programme C++ compilé (sinon recherche automatique)")
     p.add_argument("--enregistrer", metavar="IMAGE.png",
                    help="enregistre l'image de Newton (--fichier) dans ce fichier, sans ouvrir la fenêtre")
+    p.add_argument("--auto-test", metavar="RAPPORT.json",
+                   help="ouvre chaque page, lance les calculs, écrit un rapport et quitte (utilisé par la CI)")
+    p.add_argument("--version", action="version", version=f"{NOM_LOGICIEL} {VERSION}")
     return p.parse_args()
+
+
+def auto_test(fenetre, chemin_rapport):
+    """Vérification de bout en bout de l'application (installée ou non) : chaque page s'ouvre,
+    le moteur C++ calcule une fractale de Newton et un ensemble de Mandelbrot, les graphes 2D
+    tracent leurs courbes. La page 3D est vérifiée sans être affichée (OpenGL est souvent
+    absent des machines de test). Renvoie le code de sortie : 0 si tout est bon."""
+    import json
+    import time
+
+    def attendre(condition, secondes):
+        debut = time.time()
+        while not condition() and time.time() - debut < secondes:
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.02)
+        return condition()
+
+    rapport = {"version": VERSION, "moteur": fenetre.executable, "donnees": nc.DOSSIER_DONNEES, "pages": {}}
+    for nom in ("newton", "mandelbrot", "graphe2d"):
+        try:
+            fenetre.ouvrir(nom)
+            vue = fenetre.vues[nom]
+            if nom == "graphe2d":
+                ok = attendre(lambda vue=vue: len(vue.courbes) > 0, 10)
+                rapport["pages"][nom] = {"ok": ok, "courbes": len(vue.courbes)}
+            elif fenetre.executable is None:
+                rapport["pages"][nom] = {"ok": False, "erreur": "moteur de calcul introuvable"}
+            else:
+                ok = attendre(lambda vue=vue: vue.donnees is not None and vue.calcul_en_cours is None, 120)
+                rapport["pages"][nom] = {"ok": ok, "statut": vue.label_statut.text(),
+                                         "taille": list(vue.donnees.shape) if vue.donnees is not None else None}
+        except Exception as e:   # le rapport doit être écrit quoi qu'il arrive
+            rapport["pages"][nom] = {"ok": False, "erreur": repr(e)}
+    import vue_surfaces3d
+    rapport["pages"]["surfaces3d"] = {"ok": vue_surfaces3d.ERREUR_OPENGL is None,   # pyqtgraph.opengl embarqué
+                                      "erreur_opengl": repr(vue_surfaces3d.ERREUR_OPENGL)}
+    fenetre.aller_accueil()
+    rapport["ok"] = all(page["ok"] for page in rapport["pages"].values())
+    with open(chemin_rapport, "w", encoding="utf-8") as f:
+        json.dump(rapport, f, indent=2, ensure_ascii=False)
+    return 0 if rapport["ok"] else 1
 
 
 def main():
@@ -218,7 +317,15 @@ def main():
         return
 
     app.setStyleSheet(STYLE)
+    app.setApplicationName(NOM_LOGICIEL)
+    app.setApplicationVersion(VERSION)
+    if os.path.isfile(chemin_icone()):
+        app.setWindowIcon(QtGui.QIcon(chemin_icone()))
     fenetre = FenetrePrincipale(args, nc.trouver_executable(args.exe))
+    if args.auto_test:
+        fenetre.resize(1400, 850)
+        fenetre.show()
+        sys.exit(auto_test(fenetre, args.auto_test))
     # On arrive toujours sur l'accueil (même lancé par main.exe : la page Newton affichera
     # alors son résultat à l'ouverture), sauf si --vue demande une page précise
     if args.vue and args.vue != "accueil":

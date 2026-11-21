@@ -11,7 +11,7 @@ import newton_calcul as nc
 from interface_commune import BORDURE, ERREUR, FOND, SUCCES, TEXTE, TEXTE_DOUX, etiquette
 from widgets_fonctions import Curseurs, ListeFonctions, barre_titre, charger_etat, sauver_etat, zone_defilante
 
-FICHIER_ETAT = os.path.join(nc.DOSSIER, "graphes2d.json")
+FICHIER_ETAT = os.path.join(nc.DOSSIER_DONNEES, "graphes2d.json")
 
 
 def stylo(couleur, epaisseur):
@@ -289,7 +289,7 @@ class VueGraphe2D(QtWidgets.QWidget):
         self.statut(message)
 
     def exporter(self):
-        defaut = os.path.join(nc.DOSSIER, time.strftime("graphe_%Y%m%d_%H%M%S.png"))
+        defaut = os.path.join(nc.dossier_exports(), time.strftime("graphe_%Y%m%d_%H%M%S.png"))
         chemin, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Enregistrer l'image", defaut, "Images PNG (*.png)")
         if not chemin:
             return

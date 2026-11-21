@@ -1,11 +1,20 @@
-# Déploiement continu : pousser un tag vX.Y.Z publie une GitHub Release contenant
-# une archive Windows prête à l'emploi (moteur compilé + interface Python).
-# Lancé à la main (workflow_dispatch), il construit l'archive sans rien publier.
+# Déploiement continu : construit le logiciel Windows et son installateur.
+#   - pousser un tag vX.Y.Z publie une GitHub Release avec NewtonFractals-Setup-X.Y.Z.exe
+#     (installateur, sans Python) et une archive .zip (sources Python + moteur compilé) ;
+#   - sur une pull request qui touche le code ou l'empaquetage, et à la main (workflow_dispatch),
+#     tout est construit et testé, sans rien publier (installateur disponible en artefact).
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths:
+      - "ConsoleApplication2/**"
+      - "packaging/**"
+      - "docs/manuel/**"
+      - "requirements.txt"
+      - ".github/workflows/release.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,7 +22,8 @@ permissions:
 
 jobs:
   windows:
-    name: Archive Windows
+    name: Installateur Windows
+    timeout-minutes: 40
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,7 +33,7 @@ jobs:
           msystem: UCRT64
           install: mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-libgomp
 
-      # (les DLL de MinGW, dont OpenMP, sont jointes à l'archive : rien à installer côté C++)
+      # (les DLL de MinGW, dont OpenMP, sont livrées avec le moteur : rien à installer côté C++)
       - name: Compiler le moteur C++ et joindre ses DLL
         shell: msys2 {0}
         working-directory: ConsoleApplication2
@@ -36,24 +46,72 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Vérifier le moteur avant de le publier
+      - name: Installer les dépendances et les outils d'empaquetage
+        run: |
+          python -m pip install -r requirements.txt pytest pyinstaller
+          choco install innosetup -y --no-progress
+
+      - name: Vérifier le moteur
         env:
           MAIN_EXE: ${{ github.workspace }}\ConsoleApplication2\main.exe
-        run: |
-          python -m pip install numpy pytest
-          python -m pytest tests/test_moteur.py -v
+        run: python -m pytest tests/test_moteur.py -v
 
-      - name: Assembler l'archive
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path ConsoleApplication2\NewtonFractalsDrawing.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Le tag $env:GITHUB_REF_NAME ne correspond pas à VERSION = $version (NewtonFractalsDrawing.py)"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Construire le logiciel et l'installateur
+        run: python packaging/construire.py --moteur ConsoleApplication2\main.exe
+
+      # Test de bout en bout de ce que reçoit l'utilisateur : installation silencieuse,
+      # lancement de l'exe installé (calculs du moteur compris), puis désinstallation.
+      - name: Installer, lancer et désinstaller
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $setup = "dist\NewtonFractals-Setup-${{ steps.version.outputs.version }}.exe"
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT", "/CURRENTUSER", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=installation.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content installation.log; throw "Installation : code $($p.ExitCode)" }
+
+          $dossier = Join-Path $env:LOCALAPPDATA "Programs\Newton Fractals"
+          foreach ($f in "NewtonFractals.exe", "moteur\moteur.exe", "manuel\index.html", "unins000.exe") {
+            if (-not (Test-Path (Join-Path $dossier $f))) { throw "Fichier manquant après installation : $f" }
+          }
+
+          $rapport = Join-Path $env:RUNNER_TEMP "rapport.json"
+          $p = Start-Process (Join-Path $dossier "NewtonFractals.exe") -ArgumentList "--auto-test", "`"$rapport`"" -PassThru
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); throw "L'application ne s'est pas terminée en 5 minutes" }
+          if (Test-Path $rapport) { Get-Content $rapport } else { throw "Pas de rapport : l'application n'a pas démarré (code $($p.ExitCode))" }
+          if ($p.ExitCode -ne 0) { throw "Auto-test en échec (code $($p.ExitCode))" }
+
+          $p = Start-Process (Join-Path $dossier "unins000.exe") -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART" -Wait -PassThru
+          Start-Sleep -Seconds 3   # le désinstalleur se relance depuis un dossier temporaire
+          if (Test-Path (Join-Path $dossier "NewtonFractals.exe")) { throw "Désinstallation incomplète" }
+          "Installation, lancement et désinstallation : OK"
+
+      - name: Assembler l'archive des sources
         id: archive
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME } else { "dev-$($env:GITHUB_SHA.Substring(0, 7))" }
           $dossier = "NewtonFractals-$version-windows"
           New-Item -ItemType Directory $dossier | Out-Null
-          Copy-Item ConsoleApplication2\main.exe, ConsoleApplication2\*.dll, ConsoleApplication2\*.py $dossier
+          Copy-Item ConsoleApplication2\main.exe, ConsoleApplication2\*.dll, ConsoleApplication2\*.py, ConsoleApplication2\icone.png $dossier
           Copy-Item requirements.txt, README.md, packaging\QUICKSTART.txt $dossier
           Compress-Archive -Path $dossier -DestinationPath "$dossier.zip"
           "nom=$dossier" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NewtonFractals-Setup-${{ steps.version.outputs.version }}
+          path: dist/NewtonFractals-Setup-${{ steps.version.outputs.version }}.exe
 
       - uses: actions/upload-artifact@v4
         with:
@@ -65,5 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >
-          gh release create "${{ github.ref_name }}" "${{ steps.archive.outputs.nom }}.zip"
+          gh release create "${{ github.ref_name }}"
+          "dist/NewtonFractals-Setup-${{ steps.version.outputs.version }}.exe"
+          "${{ steps.archive.outputs.nom }}.zip"
           --title "Newton Fractals ${{ github.ref_name }}" --generate-notes --verify-tag

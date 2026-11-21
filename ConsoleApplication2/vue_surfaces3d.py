@@ -21,7 +21,7 @@ except Exception as e:   # PyOpenGL absent, ou OpenGL indisponible
     gl = None
     ERREUR_OPENGL = e
 
-FICHIER_ETAT = os.path.join(nc.DOSSIER, "surfaces3d.json")
+FICHIER_ETAT = os.path.join(nc.DOSSIER_DONNEES, "surfaces3d.json")
 RESOLUTION_EQUATIONS = 120   # points par côté de la grille 3D des équations (120³ ≈ 1,7 million de points)
 RESOLUTION_APERCU = 56       # pendant qu'un curseur bouge : aperçu rapide
 FONCTIONS_DEPART = [{"texte": "z = sin(x) cos(y)"}]
@@ -346,7 +346,7 @@ class VueSurfaces3D(QtWidgets.QWidget):
     def exporter(self):
         if gl is None:
             return
-        defaut = os.path.join(nc.DOSSIER, time.strftime("surface_%Y%m%d_%H%M%S.png"))
+        defaut = os.path.join(nc.dossier_exports(), time.strftime("surface_%Y%m%d_%H%M%S.png"))
         chemin, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Enregistrer l'image", defaut, "Images PNG (*.png)")
         if not chemin:
             return
