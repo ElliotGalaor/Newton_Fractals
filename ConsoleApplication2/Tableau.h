@@ -20,7 +20,8 @@ private:
     double incr_y = 0.4;
 public:
     Tableau(int dim_x = 10, int dim_y = 10, double max_x = 2, double min_x = -2, double max_y = 2, double min_y = -2);
-    CNum getCell(int x, int y) const { return CNum(min_x + x * incr_x, min_y + y * incr_y); }
+    // centre du pixel (x, y) : le pixel x couvre [min_x + x*incr_x, min_x + (x+1)*incr_x]
+    CNum getCell(int x, int y) const { return CNum(min_x + (x + 0.5) * incr_x, min_y + (y + 0.5) * incr_y); }
     int getIndice(int x, int y) const { return res[(size_t)x * dim_y + y]; }
     int getDimX() const { return dim_x; }
     int getDimY() const { return dim_y; }

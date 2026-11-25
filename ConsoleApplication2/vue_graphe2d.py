@@ -1,4 +1,5 @@
 """Page « Graphes 2D » : tracé de fonctions réelles y = f(x), à la façon de GeoGebra."""
+import math
 import os
 import time
 
@@ -34,6 +35,17 @@ FONCTIONS_DEPART = [{"texte": "f(x) = sin(x)"}, {"texte": "g(x) = x^2/4 - 2"}, {
 VUE_STANDARD = (-10.0, 10.0, -6.0, 6.0)
 
 
+def vue_valide(vue):
+    """Zone sauvegardée [x0, x1, y0, y1] si elle est utilisable, sinon la vue standard."""
+    try:
+        x0, x1, y0, y1 = (float(v) for v in vue)
+        if all(math.isfinite(v) and abs(v) < 1e200 for v in (x0, x1, y0, y1)) and x0 < x1 and y0 < y1:
+            return x0, x1, y0, y1
+    except (TypeError, ValueError):
+        pass
+    return VUE_STANDARD
+
+
 class VueGraphe2D(QtWidgets.QWidget):
     NOM = "Graphes 2D"
 
@@ -41,14 +53,14 @@ class VueGraphe2D(QtWidgets.QWidget):
         super().__init__()
         self.principale = principale
         self.courbes = []                 # (élément tracé, expression, nom, couleur)
-        etat = charger_etat(FICHIER_ETAT) or {}
+        etat = charger_etat(FICHIER_ETAT, {"orthonorme": True, "grille": True})
         self.minuteur_sauvegarde = QtCore.QTimer(self)
         self.minuteur_sauvegarde.setSingleShot(True)
         self.minuteur_sauvegarde.setInterval(800)
         self.minuteur_sauvegarde.timeout.connect(self.sauvegarder)
         self.construire_interface(etat)
 
-        x0, x1, y0, y1 = etat.get("vue", VUE_STANDARD)
+        x0, x1, y0, y1 = vue_valide(etat.get("vue"))
         self.vb.setRange(xRange=(x0, x1), yRange=(y0, y1), padding=0)
         self.fonctions_changees()
 

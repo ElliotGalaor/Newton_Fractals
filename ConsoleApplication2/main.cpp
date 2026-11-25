@@ -155,9 +155,9 @@ static vector<float> calculer_mandelbrot(const Parametres& p) {
 
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < dim_x; i++) {
-        const double cx = p.min_x + i * incr_x;
+        const double cx = p.min_x + (i + 0.5) * incr_x;   // centre du pixel
         for (int k = 0; k < dim_y; k++) {
-            const double cy = p.min_y + k * incr_y;
+            const double cy = p.min_y + (k + 0.5) * incr_y;
             float& sortie = res[(size_t)i * dim_y + k];
             // Points de la cardioïde principale et du disque de période 2 : dans l'ensemble, sans calcul
             const double q = (cx - 0.25) * (cx - 0.25) + cy * cy;
@@ -282,7 +282,7 @@ static void afficher_aide() {
 static bool lire_nombre(const char* texte, double& valeur) {
     char* fin = nullptr;
     valeur = strtod(texte, &fin);
-    return fin != texte && *fin == '\0';
+    return fin != texte && *fin == '\0' && isfinite(valeur);   // (nan et inf refusés)
 }
 
 // Lit « N re1 im1 ... reN imN » à partir de argv[a + 1] ; avance a jusqu'à la dernière valeur lue
@@ -333,6 +333,9 @@ static bool lire_arguments(int argc, char* argv[], Parametres& p, string& erreur
         double v[4];
         for (int k = 0; k < nb; k++) {
             if (!lire_nombre(argv[a + 1 + k], v[k])) { erreur = string("Nombre invalide : ") + argv[a + 1 + k]; return false; }
+        }
+        if ((opt == "--taille" || opt == "--iterations") && (fabs(v[0]) > 1e9 || (nb == 2 && fabs(v[1]) > 1e9))) {
+            erreur = "Valeur trop grande apres " + opt; return false;
         }
         if (opt == "--taille") { p.dim_x = (int)v[0]; p.dim_y = (int)v[1]; }
         else if (opt == "--bornes") { p.min_x = v[0]; p.max_x = v[1]; p.min_y = v[2]; p.max_y = v[3]; }
@@ -385,7 +388,7 @@ static vector<vector<CNum>> init_map_simple(int dim_x = 10, int dim_y = 10, doub
     double incr_y = (max_y - min_y) / dim_y;
     for (int i = 0;i < dim_x;i++) {
         for (int j = 0;j < dim_y;j++) {
-            res[i][j] = CNum(min_x + i * incr_x, min_y + j * incr_y);
+            res[i][j] = CNum(min_x + (i + 0.5) * incr_x, min_y + (j + 0.5) * incr_y);
         }
     }
     return res;

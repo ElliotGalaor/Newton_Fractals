@@ -441,11 +441,15 @@ class VueFractale(QtWidgets.QWidget):
             except (OSError, ValueError) as e:
                 self.statut(f"Lecture du résultat impossible :\n{e}", ERREUR)
             else:
-                self.afficher_resultat(donnees, p)
-                nc.sauvegarder_parametres(self.p, self.FICHIER_BINAIRE, self.FICHIER_PARAMETRES)
-                duree = time.perf_counter() - self.debut
-                suite = self.message_termine(p)
-                self.statut(f"Terminé en {duree:.2f} s" + (f"   ·   {suite}" if suite else ""), SUCCES)
+                try:
+                    self.afficher_resultat(donnees, p)
+                    nc.sauvegarder_parametres(self.p, self.FICHIER_BINAIRE, self.FICHIER_PARAMETRES)
+                except Exception as e:   # (sinon le statut resterait sur « Calcul en cours… »)
+                    self.statut(f"Affichage du résultat impossible :\n{e}", ERREUR)
+                else:
+                    duree = time.perf_counter() - self.debut
+                    suite = self.message_termine(p)
+                    self.statut(f"Terminé en {duree:.2f} s" + (f"   ·   {suite}" if suite else ""), SUCCES)
         if self.en_attente is not None:
             suivant, self.en_attente = self.en_attente, None
             self.lancer(suivant)

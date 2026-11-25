@@ -1,5 +1,6 @@
 """Page « Surfaces 3D » : surfaces z = f(x, y) et équations en x, y, z (sphère…) dans R³,
 manipulables à la souris."""
+import math
 import os
 import sys
 import time
@@ -28,6 +29,38 @@ FONCTIONS_DEPART = [{"texte": "z = sin(x) cos(y)"}]
 DOMAINE = {"min_x": -5.0, "max_x": 5.0, "min_y": -5.0, "max_y": 5.0, "resolution": 120, "limite_z": 5.0}
 CHAMPS = [("min_x", "x min", float), ("max_x", "x max", float), ("min_y", "y min", float),
           ("max_y", "y max", float), ("resolution", "Points par côté", int), ("limite_z", "z entre ± (coupure)", float)]
+BORNE_MAX = 1e6   # au-delà, la grille et les axes d'OpenGL ne suivent plus
+
+
+def lire_domaine(textes):
+    """{clé: texte} des champs du domaine → domaine vérifié ; lève ValueError avec un message clair."""
+    d = {}
+    for cle, libelle, type_ in CHAMPS:
+        try:
+            valeur = float(str(textes[cle]).strip().replace(",", "."))
+        except ValueError:
+            raise ValueError(f"« {libelle} » : nombre attendu") from None
+        if type_ is int:
+            if not math.isfinite(valeur) or valeur != int(valeur):
+                raise ValueError(f"« {libelle} » : nombre entier attendu")
+            valeur = int(valeur)
+        d[cle] = valeur
+    verifier_domaine(d)
+    return d
+
+
+def verifier_domaine(d):
+    for cle, libelle, _ in CHAMPS:
+        if not isinstance(d.get(cle), (int, float)) or isinstance(d.get(cle), bool) or not math.isfinite(d[cle]):
+            raise ValueError(f"« {libelle} » : nombre fini attendu")
+        if abs(d[cle]) > BORNE_MAX and cle != "resolution":
+            raise ValueError(f"« {libelle} » : valeur trop grande (±{BORNE_MAX:g} au maximum)")
+    if d["min_x"] >= d["max_x"] or d["min_y"] >= d["max_y"]:
+        raise ValueError("il faut min < max")
+    if not 10 <= d["resolution"] <= 400:
+        raise ValueError("points par côté : entre 10 et 400")
+    if d["limite_z"] <= 0:
+        raise ValueError("la coupure de z doit être positive")
 
 # Dégradé pour la coloration selon la hauteur (bas → haut)
 _DEGRADE_HAUTEUR = np.array([[0x2b, 0x1e, 0x6e], [0x11, 0x8a, 0xb2], [0x06, 0xd6, 0xa0],
@@ -45,6 +78,38 @@ def hex_rgb(couleur):
     return np.array([int(couleur[i:i + 2], 16) for i in (1, 3, 5)], dtype=float) / 255
 
 
+def maillage_grille(xs, ys, Z, trous):
+    """Grille z[i, j] au point (xs[i], ys[j]) → (sommets, triangles), sans les triangles qui
+    touchent un point non défini. Chaque case donne deux triangles."""
+    nx, ny = Z.shape
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    sommets = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=1)
+    i, j = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
+    a, b = (i * ny + j).ravel(), (i * ny + j + 1).ravel()
+    c, d = ((i + 1) * ny + j + 1).ravel(), ((i + 1) * ny + j).ravel()
+    faces = np.concatenate([np.stack([a, b, c], axis=1), np.stack([a, c, d], axis=1)])
+    return sommets, faces[~trous.ravel()[faces].any(axis=1)]
+
+
+def sommets_sur_un_pole(expression, parametres, sommets, grille, F, bornes):
+    """Sommets où le changement de signe de F vient d'un pôle et non d'un zéro. Chaque sommet est
+    sur une arête de la grille : on vérifie, par dichotomie sur cette arête, que F s'y annule."""
+    n = np.array(F.shape)
+    proche = np.rint(grille)
+    axe = np.argmax(np.abs(grille - proche), axis=1)               # l'arête suit cet axe
+    i0 = np.clip(proche.astype(int), 0, n - 1)
+    lignes = np.arange(len(grille))
+    i0[lignes, axe] = np.clip(np.floor(grille[lignes, axe]).astype(int), 0, n[axe] - 2)
+    i1 = i0.copy()
+    i1[lignes, axe] += 1
+    pas = [(b - a) / (m - 1) for (a, b), m in zip(bornes, n, strict=True)]
+    debut = {v: bornes[k][0] + i0[:, k] * pas[k] for k, v in enumerate("xyz")}
+    fin = {v: bornes[k][0] + i1[:, k] * pas[k] for k, v in enumerate("xyz")}
+    v0 = F[i0[:, 0], i0[:, 1], i0[:, 2]]
+    v1 = F[i1[:, 0], i1[:, 1], i1[:, 2]]
+    return ~ex.vrai_zero(expression, parametres, debut, fin, v0, v1)
+
+
 class VueSurfaces3D(QtWidgets.QWidget):
     NOM = "Surfaces 3D"
 
@@ -52,8 +117,12 @@ class VueSurfaces3D(QtWidgets.QWidget):
         super().__init__()
         self.principale = principale
         self.surfaces = []
-        etat = charger_etat(FICHIER_ETAT) or {}
+        etat = charger_etat(FICHIER_ETAT, {"couleur_hauteur": False, "fil_de_fer": False, "axes": True})
         self.domaine = dict(DOMAINE, **{k: etat[k] for k in DOMAINE if k in etat})
+        try:
+            verifier_domaine(self.domaine)
+        except (ValueError, TypeError):
+            self.domaine = dict(DOMAINE)
         self.minuteur = QtCore.QTimer(self)   # regroupe les mises à jour pendant la frappe
         self.minuteur.setSingleShot(True)
         self.minuteur.setInterval(60)
@@ -187,15 +256,7 @@ class VueSurfaces3D(QtWidgets.QWidget):
 
     def domaine_change(self):
         try:
-            d = {cle: (int(float(self.champs[cle].text().replace(",", "."))) if t is int
-                       else float(self.champs[cle].text().replace(",", ".")))
-                 for cle, _, t in CHAMPS}
-            if d["min_x"] >= d["max_x"] or d["min_y"] >= d["max_y"]:
-                raise ValueError("il faut min < max")
-            if not 10 <= d["resolution"] <= 400:
-                raise ValueError("points par côté : entre 10 et 400")
-            if d["limite_z"] <= 0:
-                raise ValueError("la coupure de z doit être positive")
+            d = lire_domaine({cle: self.champs[cle].text() for cle, _, _ in CHAMPS})
         except ValueError as e:
             self.statut(f"Domaine : {e}", ERREUR)
             return
@@ -238,12 +299,22 @@ class VueSurfaces3D(QtWidgets.QWidget):
                 # Couleur de la fonction, légèrement modulée par la hauteur pour mieux voir le relief
                 t = (Z - Z.min()) / max(np.ptp(Z), 1e-12)
                 rgb = hex_rgb(couleur)[None, None, :] * (0.55 + 0.45 * t[..., None])
-            alpha = np.where(trous, 0.0, 1.0)[..., None]
-            couleurs = np.concatenate([rgb, alpha], axis=-1).astype(np.float32)
-            surface = gl.GLSurfacePlotItem(x=xs, y=ys, z=Z, colors=couleurs, shader="shaded",
-                                           computeNormals=True, smooth=True,
-                                           drawEdges=self.case_fil.isChecked(), edgeColor=(1, 1, 1, 0.25),
-                                           glOptions="translucent" if trous.any() else "opaque")
+            couleurs = np.concatenate([rgb, np.ones(rgb.shape[:-1] + (1,))], axis=-1).astype(np.float32)
+            if trous.any():
+                # Domaine avec des trous (ex. sqrt(4 - x² - y²)) : on ne garde que les triangles
+                # dont les trois sommets sont définis, sinon des « rideaux » tomberaient jusqu'à z = 0
+                sommets, faces = maillage_grille(xs, ys, Z, trous)
+                if not len(faces):
+                    continue
+                surface = gl.GLMeshItem(meshdata=gl.MeshData(vertexes=sommets, faces=faces,
+                                                             vertexColors=couleurs.reshape(-1, 4)),
+                                        smooth=True, shader="shaded", drawEdges=self.case_fil.isChecked(),
+                                        edgeColor=(1, 1, 1, 0.25), glOptions="opaque")
+            else:
+                surface = gl.GLSurfacePlotItem(x=xs, y=ys, z=Z, colors=couleurs, shader="shaded",
+                                               computeNormals=True, smooth=True,
+                                               drawEdges=self.case_fil.isChecked(), edgeColor=(1, 1, 1, 0.25),
+                                               glOptions="opaque")
             self.vue3d.addItem(surface)
             self.surfaces.append(surface)
 
@@ -289,9 +360,17 @@ class VueSurfaces3D(QtWidgets.QWidget):
             if not len(faces):
                 return None, np.array([])
         # Coordonnées de grille → coordonnées réelles
-        sommets = np.asarray(sommets, dtype=float)
+        grille = np.asarray(sommets, dtype=float)
+        sommets = grille.copy()
         for k, (a, b) in enumerate(bornes):
             sommets[:, k] = a + sommets[:, k] * (b - a) / (n - 1)
+        # Un changement de signe à travers un pôle (ex. tan(x) = 0 en x = π/2, 1/x = 0 en 0)
+        # n'est pas la surface : F y est bien plus grande qu'aux coins de la case, au lieu de s'annuler
+        faux = sommets_sur_un_pole(expression, parametres, sommets, grille, F, bornes)
+        if faux.any():
+            faces = faces[~faux[faces].any(axis=1)]
+            if not len(faces):
+                return None, np.array([])
         z = sommets[:, 2]
         if self.case_hauteur.isChecked():
             rgb = couleurs_hauteur(z, -limite, limite)

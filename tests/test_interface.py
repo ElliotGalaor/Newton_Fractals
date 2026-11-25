@@ -102,3 +102,82 @@ def test_marching_cubes_sphere():
     rayons = np.linalg.norm(-5 + np.asarray(sommets) * (10 / 59), axis=1)
     assert len(faces) > 1000
     np.testing.assert_allclose(rayons, 3.0, atol=0.02)
+
+
+@pytest.mark.parametrize("etat", ['{"fonctions": "abc"}', '{"fonctions": [{"texte": "x", "couleur": "pas une couleur"}]}',
+                                  '{"min_x": "a"}', '{"fonctions": 5, "parametres": {"a": "x"}}', "[1, 2]",
+                                  '{"resolution": 100000}', '{"min_x": -Infinity}', '{"vue": [1, 0, "a"]}', "{"])
+def test_etat_sauvegarde_invalide_ignore(fenetre, etat):
+    """Un fichier d'état modifié ou abîmé ne doit jamais empêcher une page de s'ouvrir."""
+    import vue_graphe2d
+    import vue_surfaces3d
+
+    for module in (vue_graphe2d, vue_surfaces3d):
+        with open(module.FICHIER_ETAT, "w", encoding="utf-8") as f:
+            f.write(etat)
+    fenetre.ouvrir("graphe2d")
+    assert fenetre.pile.currentWidget() is fenetre.vues["graphe2d"]
+    if vue_surfaces3d.ERREUR_OPENGL is None:
+        vue = vue_surfaces3d.VueSurfaces3D(fenetre)
+        vue_surfaces3d.verifier_domaine(vue.domaine)
+
+
+def test_domaine_3d_verifie():
+    import vue_surfaces3d as v3
+
+    textes = {cle: str(v) for cle, v in v3.DOMAINE.items()}
+    assert v3.lire_domaine(textes) == v3.DOMAINE
+    for cle, texte, message in (("max_x", "nan", "fini"), ("min_x", "-1e308", "trop grande"),
+                                ("max_x", "abc", "nombre attendu"), ("resolution", "12.9", "entier"),
+                                ("limite_z", "inf", "fini")):
+        with pytest.raises(ValueError, match=message):
+            v3.lire_domaine(dict(textes, **{cle: texte}))
+
+
+def test_trous_sans_rideaux():
+    """z = f(x, y) avec des trous : aucun triangle ne touche un point non défini."""
+    import vue_surfaces3d as v3
+
+    xs = np.linspace(-3, 3, 31)
+    X, Y = np.meshgrid(xs, xs, indexing="ij")
+    Z = np.sqrt(4 - X ** 2 - Y ** 2)
+    trous = ~np.isfinite(Z)
+    sommets, faces = v3.maillage_grille(xs, xs, np.where(trous, 0, Z), trous)
+    assert len(faces) > 0 and not trous.ravel()[faces].any()
+
+
+def test_pas_de_surface_sur_un_pole():
+    import expressions as ex
+    import vue_surfaces3d as v3
+
+    n, bornes = 60, [(-5, 5)] * 3
+    X, Y, Z = np.meshgrid(*[np.linspace(a, b, n) for a, b in bornes], indexing="ij")
+    for texte, plans in (("tan(x) = 0", [-np.pi, 0, np.pi]), ("1/x = 0", [])):
+        e = ex.lire(texte, ("x", "y"), equations=True)
+        F = e.evaluer({"x": X, "y": Y, "z": Z})
+        grille, faces = pg.isosurface(F, 0.0)
+        grille = np.asarray(grille, dtype=float)
+        sommets = -5 + grille * (10 / (n - 1))
+        faux = v3.sommets_sur_un_pole(e, {}, sommets, grille, F, bornes)
+        gardes = faces[~faux[faces].any(axis=1)]
+        np.testing.assert_allclose(np.unique(np.round(sommets[np.unique(gardes), 0], 1)), np.round(plans, 1))
+
+
+def test_enregistrer_utilise_le_fichier_demande(tmp_path):
+    """--enregistrer exporte le fichier --fichier, pas le dernier calcul mémorisé."""
+    import subprocess
+    import sys
+
+    grille = tmp_path / "mini.txt"
+    grille.write_text("1 2 3\n3 2 1\n1 1 1\n2 2 2\n", encoding="utf-8")   # 4 valeurs de x, 3 de y
+    image = tmp_path / "mini.png"
+    script = os.path.join(os.path.dirname(__file__), "..", "ConsoleApplication2", "NewtonFractalsDrawing.py")
+    r = subprocess.run([sys.executable, script, "--enregistrer", str(image), "--fichier", str(grille)],
+                       capture_output=True, text=True, env=dict(os.environ, NEWTON_FRACTALS_RELANCE="1"), timeout=120)
+    assert r.returncode == 0, r.stderr
+    from PySide6 import QtGui
+    lue = QtGui.QImage(str(image))
+    assert (lue.width(), lue.height()) == (4, 3)
+    r = subprocess.run([sys.executable, script, "--enregistrer", str(image), "--fichier", str(tmp_path / "absent.txt")],
+                       capture_output=True, text=True, env=dict(os.environ, NEWTON_FRACTALS_RELANCE="1"), timeout=120)
+    assert r.returncode != 0 and "introuvable" in r.stderr
