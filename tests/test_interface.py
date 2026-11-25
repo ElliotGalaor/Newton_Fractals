@@ -1,4 +1,6 @@
 """Tests de fumée de l'interface Qt, hors écran (QT_QPA_PLATFORM=offscreen)."""
+import os
+
 import numpy as np
 import pytest
 
@@ -30,6 +32,7 @@ def fenetre(application, tmp_path, monkeypatch):
 
     # Aucun fichier d'état ni de résultat écrit dans le projet
     monkeypatch.setattr(nc, "DOSSIER", str(tmp_path))
+    monkeypatch.setattr(nc, "DOSSIER_DONNEES", str(tmp_path))
     monkeypatch.setattr(nc, "FICHIER_PARAMETRES", str(tmp_path / "parametres.json"))
     monkeypatch.setattr(vue_graphe2d, "FICHIER_ETAT", str(tmp_path / "graphes2d.json"))
     monkeypatch.setattr(vue_surfaces3d, "FICHIER_ETAT", str(tmp_path / "surfaces3d.json"))
@@ -51,6 +54,29 @@ def test_navigation(fenetre):
     assert fenetre.windowTitle().startswith("Fractales de Newton")
     assert "introuvable" in fenetre.vues["newton"].label_statut.text()   # pas de moteur dans ce test
     fenetre.aller_accueil()
+    assert fenetre.pile.currentWidget() is fenetre.accueil
+
+
+def test_menu_aide_et_manuel(fenetre):
+    import NewtonFractalsDrawing as entree
+
+    menus = [action.text() for action in fenetre.menuBar().actions()]
+    assert "&Aide" in menus
+    assert entree.chemin_manuel().endswith(os.path.join("docs", "manuel", "index.html"))
+    assert os.path.isfile(entree.chemin_icone())
+
+
+def test_auto_test_sans_moteur(fenetre, tmp_path):
+    """Le rapport est écrit même quand une page échoue ; sans moteur, les fractales échouent."""
+    import json
+
+    import NewtonFractalsDrawing as entree
+
+    rapport = tmp_path / "rapport.json"
+    assert entree.auto_test(fenetre, str(rapport)) == 1
+    pages = json.loads(rapport.read_text(encoding="utf-8"))["pages"]
+    assert pages["graphe2d"]["ok"] and pages["graphe2d"]["courbes"] > 0
+    assert not pages["newton"]["ok"] and "introuvable" in pages["newton"]["erreur"]
     assert fenetre.pile.currentWidget() is fenetre.accueil
 
 

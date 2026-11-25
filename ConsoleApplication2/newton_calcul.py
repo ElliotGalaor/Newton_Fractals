@@ -9,13 +9,44 @@ import json
 import os
 import re
 import shutil
+import sys
 
 import numpy as np
 
+# --- Emplacements -------------------------------------------------------------
+# DOSSIER : le code (et results.txt écrit par main.exe lancé seul, en développement).
+# INSTALLE : application empaquetée (PyInstaller) et installée, par ex. dans Program Files.
+# DOSSIER_APPLICATION : dossier de NewtonFractals.exe, qui contient le moteur (moteur\moteur.exe).
+# DOSSIER_DONNEES : fichiers écrits par l'application (paramètres, résultats, états des pages) ;
+#   le dossier d'installation n'étant pas modifiable, ils vont dans %LOCALAPPDATA%\NewtonFractals.
 DOSSIER = os.path.dirname(os.path.abspath(__file__))
-FICHIER_RESULTATS = os.path.join(DOSSIER, "results.txt")      # produit par main.exe lancé seul
-FICHIER_BINAIRE = os.path.join(DOSSIER, "results.bin")        # produit pour l'interface (rapide)
-FICHIER_PARAMETRES = os.path.join(DOSSIER, "parametres.json")   # mémorise le dernier calcul
+INSTALLE = bool(getattr(sys, "frozen", False))
+DOSSIER_APPLICATION = os.path.dirname(os.path.abspath(sys.executable)) if INSTALLE else DOSSIER
+
+
+def _dossier_donnees():
+    if not INSTALLE and os.access(DOSSIER, os.W_OK):
+        return DOSSIER   # en développement : à côté du code, comme avant
+    base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    dossier = os.path.join(base, "NewtonFractals")
+    os.makedirs(dossier, exist_ok=True)
+    return dossier
+
+
+DOSSIER_DONNEES = _dossier_donnees()
+
+
+def dossier_exports():
+    """Dossier proposé pour enregistrer les images : Images de l'utilisateur une fois installé."""
+    if INSTALLE:
+        images = os.path.join(os.path.expanduser("~"), "Pictures")
+        return images if os.path.isdir(images) else os.path.expanduser("~")
+    return DOSSIER
+
+
+FICHIER_RESULTATS = os.path.join(DOSSIER, "results.txt")             # produit par main.exe lancé seul
+FICHIER_BINAIRE = os.path.join(DOSSIER_DONNEES, "results.bin")         # produit pour l'interface (rapide)
+FICHIER_PARAMETRES = os.path.join(DOSSIER_DONNEES, "parametres.json")  # mémorise le dernier calcul
 
 # mode : "polynome" (on saisit p(z)) ou "racines" (on saisit les racines, p(z) = ∏(z - r))
 DEFAUTS = {"mode": "polynome", "polynome": "z^3 - 2z + 2", "racines_texte": "",
@@ -292,7 +323,7 @@ def resultat_memorise(memo, lire):
     """Relit le résultat du dernier calcul mémorisé, s'il n'a pas changé depuis ; sinon None."""
     if not memo or not memo.get("fichier"):
         return None
-    chemin = os.path.join(DOSSIER, memo["fichier"])
+    chemin = os.path.join(DOSSIER_DONNEES, memo["fichier"])
     if not os.path.isfile(chemin) or abs(os.path.getmtime(chemin) - memo.get("fichier_date", -1)) >= 1e-3:
         return None
     try:
@@ -337,9 +368,13 @@ def verifier_fenetre(p):
 
 
 def trouver_executable(chemin=None):
-    """Cherche le programme C++ compilé (makefile ou Visual Studio) ; prend le plus récent."""
+    """Cherche le programme C++ compilé : celui livré avec l'application installée, sinon
+    (en développement) celui du makefile ou de Visual Studio, le plus récent."""
     if chemin:
         return os.path.abspath(chemin) if os.path.isfile(chemin) else None
+    livre = os.path.join(DOSSIER_APPLICATION, "moteur", "moteur.exe")
+    if INSTALLE or os.path.isfile(livre):
+        return livre if os.path.isfile(livre) else None
     candidats = ["main.exe", "main",
                  os.path.join("..", "x64", "Release", "ConsoleApplication2.exe"),
                  os.path.join("x64", "Release", "ConsoleApplication2.exe"),

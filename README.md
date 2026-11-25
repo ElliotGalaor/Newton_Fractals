@@ -75,8 +75,13 @@ with numpy.
 
 ## Quick start
 
-**Ready-to-use Windows build** — download the archive from the
-[latest release](https://github.com/ElliotGalaor/Newton_Fractals/releases/latest), then:
+**Windows installer (no Python needed)** — download `NewtonFractals-Setup-X.Y.Z.exe` from the
+[latest release](https://github.com/ElliotGalaor/Newton_Fractals/releases/latest) and run it:
+no administrator rights required, Start menu shortcut, uninstaller, French user manual
+(`F1` in the app). See [docs/INSTALLATION.md](docs/INSTALLATION.md).
+
+**Windows archive with Python** — the release `.zip` contains the compiled engine and the
+Python sources:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -103,14 +108,20 @@ The window opens on the home page; `Ctrl+1` … `Ctrl+4` open the four visualiza
 - **Continuous integration** — every push and pull request: `ruff` lint; Linux build
   with `-Wall -Wextra` and the full test suite (Python 3.13; logic and engine also on 3.11); Windows builds
   with MinGW (DLLs bundled next to the executable) and with MSBuild (Visual Studio solution).
-- **Continuous delivery** — pushing a `vX.Y.Z` tag builds, tests and publishes a
-  Windows archive as a GitHub Release, with release notes generated from merged PRs.
+- **Continuous delivery** — pushing a `vX.Y.Z` tag builds the Windows installer
+  (PyInstaller + Inno Setup), installs it silently on a clean runner, launches the installed
+  app in self-test mode (every page, real engine computations), uninstalls it, then publishes
+  the installer and a source archive as a GitHub Release with notes generated from merged PRs.
+  Pull requests touching the app or packaging run the same pipeline without publishing.
 - **Team workflow** — work is tracked in issues and delivered through reviewed pull
   requests; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 
-The [user guide](docs/GUIDE.md) covers everything else: all controls, the formula and
+- [Installation and Windows build](docs/INSTALLATION.md) — installer, silent install,
+  building the `.exe` and the installer yourself.
+- [User manual](docs/manuel/index.html) (French, shipped with the installer).
+- The [user guide](docs/GUIDE.md) covers everything else: all controls, the formula and
 polynomial syntax, the engine's command-line options, the binary output formats and the
 known limits.
 
@@ -127,8 +138,9 @@ ConsoleApplication2/
   expressions.py                safe formula parser, marching squares
   newton_calcul.py, mandelbrot_calcul.py   logic without UI
 tests/                          pytest suite
+packaging/                      Windows build: PyInstaller spec, Inno Setup script, icon, build script
 .github/workflows/              CI and release pipelines
-docs/                           user guide and screenshots
+docs/                           user guide, installation guide, user manual, screenshots
 NewtonFractals.sln              Visual Studio solution
 ```
 

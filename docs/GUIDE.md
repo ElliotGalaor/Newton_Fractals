@@ -4,6 +4,11 @@ Detailed documentation of Newton Fractals: features, installation, controls, for
 syntax, command-line engine and output formats. For an overview, see the
 [README](../README.md).
 
+> **Just want to use it on Windows?** Install `NewtonFractals-Setup-X.Y.Z.exe` from the
+> [latest release](https://github.com/ElliotGalaor/Newton_Fractals/releases/latest): no
+> Python or compiler needed. See [INSTALLATION.md](INSTALLATION.md). The requirements and
+> build steps below are for running from source.
+
 ## Contents
 
 - [Features](#features)
@@ -142,6 +147,7 @@ python NewtonFractalsDrawing.py --help
 | Middle-click drag or `Ctrl` + drag | Pan (3D) |
 | `H` | Fractals: back to the view of the computed image |
 | `Enter` (in a field) | Fractals: compute · 2D/3D: add the typed function |
+| `F1` | User manual (*Aide* menu) |
 | `Ctrl+Q` | Quit |
 
 With *Recalcul automatique* checked (default), the fractal pages recompute the visible

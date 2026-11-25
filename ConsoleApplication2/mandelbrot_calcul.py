@@ -11,8 +11,8 @@ import numpy as np
 
 import newton_calcul as nc
 
-FICHIER_BINAIRE = os.path.join(nc.DOSSIER, "results_mandelbrot.bin")
-FICHIER_PARAMETRES = os.path.join(nc.DOSSIER, "parametres_mandelbrot.json")
+FICHIER_BINAIRE = os.path.join(nc.DOSSIER_DONNEES, "results_mandelbrot.bin")
+FICHIER_PARAMETRES = os.path.join(nc.DOSSIER_DONNEES, "parametres_mandelbrot.json")
 
 DEFAUTS = {"largeur": 1000, "hauteur": 800, "min_x": -2.5, "max_x": 1.0,
            "min_y": -1.4, "max_y": 1.4, "iterations": 500,

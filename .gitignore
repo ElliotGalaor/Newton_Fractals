@@ -23,3 +23,7 @@ graphes2d.json
 surfaces3d.json
 graphe_*.png
 surface_*.png
+
+# Construction du logiciel Windows (packaging/construire.py)
+build/
+dist/

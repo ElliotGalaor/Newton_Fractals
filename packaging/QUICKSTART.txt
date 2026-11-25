@@ -4,6 +4,9 @@ NEWTON FRACTALS - QUICK START (Windows)
 This archive contains the C++ engine, already compiled (main.exe and its DLLs,
 nothing else to install), and the Qt interface written in Python.
 
+Prefer an installer that needs no Python? Download NewtonFractals-Setup-X.Y.Z.exe
+from the same release page instead.
+
 1. Install Python 3.11 or newer (https://www.python.org/downloads/), then the
    interface dependencies, from this folder:
 

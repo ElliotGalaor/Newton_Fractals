@@ -152,7 +152,7 @@ class VueFractale(QtWidgets.QWidget):
         self.en_attente = None
         self.debut = 0.0
         self.processus = QtCore.QProcess(self)
-        self.processus.setWorkingDirectory(nc.DOSSIER)
+        self.processus.setWorkingDirectory(nc.DOSSIER_DONNEES)
         env = QtCore.QProcessEnvironment.systemEnvironment()
         env.insert("PATH", nc.environnement_calcul()["PATH"])   # DLL OpenMP de MinGW
         self.processus.setProcessEnvironment(env)
@@ -560,7 +560,7 @@ class VueFractale(QtWidgets.QWidget):
         if self.donnees is None:
             self.statut("Rien à enregistrer pour l'instant.")
             return
-        defaut = os.path.join(nc.DOSSIER, time.strftime("fractale_%Y%m%d_%H%M%S.png"))
+        defaut = os.path.join(nc.dossier_exports(), time.strftime("fractale_%Y%m%d_%H%M%S.png"))
         chemin, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Enregistrer l'image", defaut, "Images PNG (*.png)")
         if not chemin:
             return
